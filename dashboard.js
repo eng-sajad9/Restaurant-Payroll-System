@@ -144,19 +144,9 @@ function renderRoleBreakdown(employees) {
 
     return `
       <div class="role-row">
-        <div class="role-header">
-          <div class="role-info">
-            <div class="role-icon-box">${icon}</div>
-            <div>
-              <div class="role-name">${role}</div>
-              <div class="role-count">${data.count} موظف</div>
-            </div>
-          </div>
-          <span class="role-pct">${pct}%</span>
-        </div>
-        <div class="role-bar-wrap">
-          <div class="role-bar" style="width:${barWidth}%;"></div>
-        </div>
+        <div class="role-icon-box">${icon}</div>
+        <div class="role-name">${role}</div>
+        <div class="role-count-pill">${data.count} موظف</div>
       </div>`;
   }).join('');
 }
