@@ -1,11 +1,11 @@
 /* =====================================================
-   RESTAURANT PAYROLL MANAGEMENT SYSTEM â€” STYLES
+   RESTAURANT PAYROLL MANAGEMENT SYSTEM — STYLES
    ===================================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
 
-/* â”€â”€ DESIGN TOKENS â”€â”€ */
-/* â”€â”€ DESIGN TOKENS â”€â”€ */
+/* ── DESIGN TOKENS ── */
+/* ── DESIGN TOKENS ── */
 :root {
   /* Premium Slate & Blue Palette */
   --h-primary: 222;
@@ -55,7 +55,7 @@
   --tr: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* â”€â”€ RESET â”€â”€ */
+/* ── RESET ── */
 *,
 *::before,
 *::after {
@@ -375,7 +375,7 @@ button {
   min-height: 100vh;
 }
 
-/* â”€â”€ Sidebar â”€â”€ */
+/* ── Sidebar ── */
 #sidebar {
   width: var(--sidebar-w);
   background: var(--sidebar-glass);
@@ -574,7 +574,7 @@ button {
   display: block;
 }
 
-/* â”€â”€ Main Area â”€â”€ */
+/* ── Main Area ── */
 #main-area {
   margin-left: 0;
   margin-right: var(--sidebar-w);
@@ -584,7 +584,7 @@ button {
   min-height: 100vh;
 }
 
-/* â”€â”€ Header â”€â”€ */
+/* ── Header ── */
 #top-header {
   height: var(--header-h);
   background: var(--c-surface);
@@ -619,7 +619,7 @@ button {
   gap: 8px;
 }
 
-/* â”€â”€ Content â”€â”€ */
+/* ── Content ── */
 #content {
   flex: 1;
   padding: 24px;
@@ -633,7 +633,7 @@ button {
   display: block;
 }
 
-/* â”€â”€ Page Header â”€â”€ */
+/* ── Page Header ── */
 .page-header {
   display: flex;
   align-items: flex-start;
@@ -695,7 +695,7 @@ button {
   padding: 18px;
 }
 
-/* â”€â”€ Stat Cards â”€â”€ */
+/* ── Stat Cards ── */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -1542,7 +1542,7 @@ select.form-control {
   border-color: var(--c-accent);
 }
 
-/* â”€â”€ Animations â”€â”€ */
+/* ── Animations ── */
 @keyframes fadeInUp {
   from {
     opacity: 0;

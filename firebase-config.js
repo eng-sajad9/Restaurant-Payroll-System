@@ -1,8 +1,8 @@
-/**
+﻿/**
  * firebase-config.js
  * Firebase initialization.
  * !! REPLACE the placeholder values below with your own Firebase project credentials !!
- * Get them from: https://console.firebase.google.com → Project Settings → Your apps
+ * Get them from: https://console.firebase.google.com â†’ Project Settings â†’ Your apps
  */
 
 const firebaseConfig = {
@@ -28,5 +28,6 @@ firebase.firestore().enablePersistence().catch((err) => {
     }
 });
 
-// Firestore instance — shared across all modules
+// Firestore instance â€” shared across all modules
 const db = firebase.firestore();
+
