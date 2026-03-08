@@ -41,6 +41,37 @@ function showToast(message, type = 'success') {
     }, 3200);
 }
 
+// ─── Global Keyboard Shortcuts ──────────────────────────────────────────────
+/**
+ * Global listener for the 'Escape' key to close any open modals, 
+ * popups, or confirm dialogs automatically.
+ */
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        // 1. Close the confirm dialog if open by clicking cancel
+        const confirmOverlay = document.getElementById('confirm-overlay');
+        if (confirmOverlay && confirmOverlay.classList.contains('show')) {
+            const cancelBtn = document.getElementById('confirm-cancel');
+            if (cancelBtn) cancelBtn.click();
+            return; // Only close one top-level thing at a time
+        }
+
+        // 2. Call close functions for each page's specific modals
+        // We use optional calling since some scripts might not be loaded or variables not defined.
+        if (window.closeEmpModal) closeEmpModal();
+        if (window.closeDrvModal) closeDrvModal();
+        if (window.closeAddDriverModal) closeAddDriverModal();
+        if (window.closeSalModal) closeSalModal();
+        if (window.closeAccModal) closeAccModal();
+        if (window.closeChangePwd) closeChangePwd();
+
+        // 3. Fallback: find any element with 'modal-overlay show' and remove 'show'
+        document.querySelectorAll('.modal-overlay.show, .modal.show').forEach(m => {
+            m.classList.remove('show');
+        });
+    }
+});
+
 // ─── Confirm Dialog ─────────────────────────────────────────────────────────
 
 /**

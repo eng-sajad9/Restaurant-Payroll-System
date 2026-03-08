@@ -286,6 +286,16 @@ async function saveEmployee() {
     const saveBtn = document.getElementById('emp-save-btn');
     saveBtn.disabled = true;
 
+    const duplicate = _employees.find(e =>
+        e.name.trim().toLowerCase() === name.toLowerCase() && e.id !== _editEmpId
+    );
+
+    if (duplicate) {
+        showToast(`الموظف "${name}" موجود مسبقاً.`, 'warning');
+        saveBtn.disabled = false;
+        return;
+    }
+
     const data = { name, role, base_salary, phone };
 
     try {

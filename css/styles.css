@@ -1569,53 +1569,63 @@ select.form-control {
    ===================================================== */
 #toast-container {
   position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 9999;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   pointer-events: none;
+  width: 100%;
+  max-width: 450px;
 }
 
 .toast {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-left: 3px solid transparent;
-  border-radius: var(--r);
-  padding: 11px 15px;
-  font-size: 13px;
-  font-weight: 500;
-  box-shadow: var(--sh-md);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-right: 4px solid transparent;
+  /* Changed to right for RTL consistency */
+  border-radius: 40px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
   opacity: 0;
-  transform: translateX(16px);
-  transition: var(--tr);
-  max-width: 280px;
+  transform: translateY(-20px) scale(0.95);
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  pointer-events: auto;
+  text-align: center;
+  color: var(--c-text);
+  white-space: nowrap;
 }
 
 .toast.show {
   opacity: 1;
-  transform: translateX(0);
+  transform: translateY(0) scale(1);
 }
 
 .toast-success {
-  border-left-color: var(--c-success);
-  color: var(--c-success);
+  border-right-color: var(--c-success);
+  color: #065f46;
 }
 
 .toast-error {
-  border-left-color: var(--c-error);
-  color: var(--c-error);
+  border-right-color: var(--c-error);
+  color: #991b1b;
 }
 
 .toast-warning {
-  border-left-color: var(--c-warning);
-  color: var(--c-warning);
+  border-right-color: var(--c-warning);
+  color: #92400e;
 }
 
 .toast-info {
-  border-left-color: var(--c-accent);
-  color: var(--c-accent);
+  border-right-color: var(--c-accent);
+  color: #1e40af;
 }
 
 /* =====================================================

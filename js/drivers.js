@@ -490,6 +490,12 @@ async function saveNewDriver() {
 
     if (!name) { showToast('يرجى إدخال اسم السائق.', 'error'); return; }
 
+    const duplicate = _driverEmps.find(d => d.name.trim().toLowerCase() === name.toLowerCase());
+    if (duplicate) {
+        showToast(`السائق "${name}" موجود مسبقاً.`, 'warning');
+        return;
+    }
+
     const saveBtn = document.getElementById('add-drv-save-btn');
     saveBtn.disabled = true;
 
@@ -542,6 +548,12 @@ async function updateDriverProfile(driverId) {
     const salary = parseFloat(salaryRaw) || 0;
 
     if (!name) { showToast('يرجى إدخال اسم السائق.', 'error'); return; }
+
+    const duplicate = _driverEmps.find(d => d.name.trim().toLowerCase() === name.toLowerCase() && d.id !== driverId);
+    if (duplicate) {
+        showToast(`السائق "${name}" موجود مسبقاً.`, 'warning');
+        return;
+    }
 
     const saveBtn = document.getElementById('add-drv-save-btn');
     saveBtn.disabled = true;
