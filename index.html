@@ -36,6 +36,26 @@
   <!-- ═══════════════ إشعارات التوست ═══════════════ -->
   <div id="toast-container" aria-live="polite"></div>
 
+  <!-- ═══════════════ شريط الإجراءات الجماعية (Floating) ═══════════════ -->
+  <div id="emp-bulk-actions" class="bulk-actions-bar">
+    <div class="bulk-info">
+      <span id="emp-selected-count" class="selected-count">0</span> موظفين محددين
+    </div>
+    <div class="bulk-btns">
+      <button class="btn btn-danger btn-sm" onclick="bulkDeleteEmployees()">
+        <svg viewBox="0 0 24 24">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          <path d="M10 11v6" />
+          <path d="M14 11v6" />
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+        </svg>
+        حذف المحدد
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="clearEmployeeSelection()">إلغاء</button>
+    </div>
+  </div>
+
   <!-- ═══════════════ نافذة التأكيد ═══════════════ -->
   <div id="confirm-overlay" role="dialog" aria-modal="true">
     <div class="confirm-dialog">
@@ -51,7 +71,7 @@
   <!-- ═══════════════════════════════════════════════════════════════
      صفحة تسجيل الدخول
 ══════════════════════════════════════════════════════════════════ -->
-  <section id="login-section">
+  <section id="login-section" style="display:none;">
     <div class="login-card glass">
 
       <div class="login-brand">
@@ -447,12 +467,28 @@
                 <input id="emp-search" type="search" class="search-input" placeholder="البحث بالاسم أو الوظيفة..."
                   aria-label="بحث" />
               </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <label for="emp-role-filter" style="font-size:12.5px;color:var(--c-text-2);white-space:nowrap;">تصفية
+                  بالوظيفة:</label>
+                <select id="emp-role-filter" class="filter-select" style="min-width:140px;">
+                  <option value="">الكل</option>
+                </select>
+              </div>
             </div>
+
+
+
             <div class="table-wrap">
               <table class="data-table" aria-label="الموظفون">
                 <thead>
                   <tr>
-                    <th>#</th>
+                    <th style="width:40px;">
+                      <label class="custom-checkbox">
+                        <input type="checkbox" id="emp-select-all" onclick="toggleSelectAllEmps(this.checked)">
+                        <span class="checkmark"></span>
+                      </label>
+                    </th>
+                    <th style="width:50px;">#</th>
                     <th>الاسم</th>
                     <th>الراتب الأساسي</th>
                     <th>الوظيفة</th>
@@ -616,6 +652,16 @@
                 </svg>
                 <input id="drv-search" type="search" class="search-input" placeholder="البحث باسم السائق..."
                   aria-label="بحث" oninput="filterDrivers()" />
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <label for="drv-shift-filter" style="font-size:12.5px;color:var(--c-text-2);white-space:nowrap;">تصفية
+                  بالشفت:</label>
+                <select id="drv-shift-filter" class="filter-select" style="min-width:130px;" onchange="filterDrivers()">
+                  <option value="">الكل</option>
+                  <option value="صباحي">صباحي</option>
+                  <option value="مسائي">مسائي</option>
+                  <option value="شفت كامل">شفت كامل</option>
+                </select>
               </div>
             </div>
             <div class="table-wrap">
@@ -1387,6 +1433,9 @@
       </div>
     </div>
   </div>
+
+
+
 
 </body>
 

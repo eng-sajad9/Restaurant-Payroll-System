@@ -172,33 +172,35 @@ function exportSalaries(format) {
     if (!sals.length) { showToast('لا توجد سجلات رواتب للتصدير.', 'warning'); return; }
 
     const empMap = Object.fromEntries(emps.map(e => [e.id, e]));
-    const headers = ['الموظف', 'الوظيفة', 'الراتب الأساسي (د.ع)', 'المكافأة (د.ع)', 'الخصم (د.ع)', 'الراتب النهائي (د.ع)', 'الملاحظات'];
+    const headers = ['#', 'الموظف', 'الوظيفة', 'الراتب الأساسي (د.ع)', 'المكافأة (د.ع)', 'الخصم (د.ع)', 'الراتب النهائي (د.ع)', 'الملاحظات'];
 
     let totalFinal = 0;
 
     if (format === 'excel') {
-        const rows = sals.map(s => {
-            const emp = empMap[s.employee_id] || {};
+        const rows = sals.map((s, i) => {
+            const emp = empMap[s.employee_id];
+            const empName = emp ? emp.name : (s.employee_name ? s.employee_name + ' (محذوف)' : s.employee_id || '—');
             totalFinal += s.final_salary || 0;
-            return [emp.name || '—', emp.role || '—',
-            emp.base_salary || 0, s.bonus || 0,
+            return [i + 1, empName, emp?.role || '—',
+            emp?.base_salary || 0, s.bonus || 0,
             s.deduction || 0, s.final_salary || 0, s.deduction_note || ''];
         });
         // Add totals row at the bottom in Excel too
-        rows.push(['', '', '', '', 'المجموع النهائي', totalFinal, '']);
+        rows.push(['', '', '', '', '', 'المجموع النهائي', totalFinal, '']);
         downloadExcel(headers, rows, `الرواتب_الشهرية_${month}`);
     } else {
-        const rows = sals.map(s => {
-            const emp = empMap[s.employee_id] || {};
+        const rows = sals.map((s, i) => {
+            const emp = empMap[s.employee_id];
+            const empName = emp ? emp.name : (s.employee_name ? s.employee_name + ' (محذوف)' : s.employee_id || '—');
             totalFinal += s.final_salary || 0;
-            return [emp.name || '—', emp.role || '—',
-            formatCurrency(emp.base_salary || 0),
+            return [i + 1, empName, emp?.role || '—',
+            formatCurrency(emp?.base_salary || 0),
             formatCurrency(s.bonus || 0),
             formatCurrency(s.deduction || 0),
             formatCurrency(s.final_salary || 0),
             s.deduction_note || '—'];
         });
-        const totalRow = ['', '', '', '', 'المجموع النهائي', formatCurrency(totalFinal), ''];
+        const totalRow = ['', '', '', '', '', 'المجموع النهائي', formatCurrency(totalFinal), ''];
         openPrintWindow(
             'كشف الرواتب الشهرية',
             `الشهر: ${getMonthLabel(month)}  —  عدد السجلات: ${sals.length}`,
@@ -228,7 +230,7 @@ function exportDrivers(format) {
     if (!drvs.length) { showToast('لا يوجد سائقون للتصدير.', 'warning'); return; }
 
     const recMap = Object.fromEntries(recs.map(r => [r.employee_id, r]));
-    const headers = ['السائق', 'فترة الدفع', 'الوردية', 'الراتب الأساسي (د.ع)', 'عدد الطلبات',
+    const headers = ['#', 'السائق', 'فترة الدفع', 'الوردية', 'الراتب الأساسي (د.ع)', 'عدد الطلبات',
         'سعر الطلب (د.ع)', 'أجر الطلبات (د.ع)', 'مكافأة (د.ع)', 'خصم (د.ع)', 'الراتب النهائي (د.ع)', 'ملاحظات'];
 
     const shiftLabel = s => s === 'مسائي' ? 'مسائي' : (s === 'صباحي' ? 'صباحي' : '—');
@@ -236,19 +238,20 @@ function exportDrivers(format) {
     let totalPay = 0;
 
     if (format === 'excel') {
-        const dataRows = drvs.map(drv => {
+        const dataRows = drvs.map((drv, i) => {
             const rec = recMap[drv.id];
             const orders = rec ? (rec.delivery_orders || 0) : 0;
             const price = rec ? (rec.order_price || 0) : 0;
             const final = rec ? (rec.final_salary || 0) : 0;
             const savedBase = rec?.base_salary_paid !== undefined ? rec.base_salary_paid : (drv.base_salary || 0);
+            const drvName = drv.id ? drv.name : (rec?.employee_name ? rec.employee_name + ' (محذوف)' : '—');
             totalPay += final;
-            return [drv.name, periodLabel, shiftLabel(rec?.shift_type),
+            return [i + 1, drvName, periodLabel, shiftLabel(rec?.shift_type),
                 savedBase, orders, price,
             orders * price, rec ? (rec.bonus || 0) : 0,
             rec ? (rec.deduction || 0) : 0, final, rec ? (rec.note || '') : ''];
         });
-        dataRows.push(['', '', '', '', '', '', '', '', '', 'إجمالي المدفوعات', totalPay]);
+        dataRows.push(['', '', '', '', '', '', '', '', '', '', 'إجمالي المدفوعات', totalPay]);
 
         const colCount = headers.length;
 
@@ -275,15 +278,17 @@ function exportDrivers(format) {
         XLSX.writeFile(wb, `الدليفري_${month}_${safePeriod}.xlsx`);
         showToast('تم تصدير ملف Excel بنجاح.');
     } else {
-        const rows = drvs.map(drv => {
+        const rows = drvs.map((drv, i) => {
             const rec = recMap[drv.id];
             const orders = rec ? (rec.delivery_orders || 0) : 0;
             const price = rec ? (rec.order_price || 0) : 0;
             const final = rec ? (rec.final_salary || 0) : 0;
             const savedBase = rec?.base_salary_paid !== undefined ? rec.base_salary_paid : (drv.base_salary || 0);
+            const drvName = drv.id ? drv.name : (rec?.employee_name ? rec.employee_name + ' (محذوف)' : '—');
             totalPay += final;
             return [
-                drv.name,
+                i + 1,
+                drvName,
                 periodLabel,
                 shiftLabel(rec?.shift_type),
                 formatCurrency(savedBase),
@@ -296,7 +301,7 @@ function exportDrivers(format) {
                 rec ? (rec.note || '') : ''
             ];
         });
-        const totalRow = ['', '', '', '', '', '', '', '', '', 'إجمالي المدفوعات', formatCurrency(totalPay)];
+        const totalRow = ['', '', '', '', '', '', '', '', '', '', 'إجمالي المدفوعات', formatCurrency(totalPay)];
 
         // Build a period banner for PDF — only shown when half-month
         const periodBanner = isHalf

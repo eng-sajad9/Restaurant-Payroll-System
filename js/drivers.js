@@ -140,8 +140,9 @@ async function loadDriverPage(month, period) {
         .where('month', '==', month)
         .onSnapshot(snap => {
             const allRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            // Filter locally to match our known driver IDs and the current period
-            const driverRelated = allRecords.filter(r => empIds.includes(r.employee_id));
+            // Filter to include ALL records with a pay_period (indicating they are driver records)
+            // even if the driver has been deleted from the active list.
+            const driverRelated = allRecords.filter(r => !!r.pay_period);
 
             _driverRecords = driverRelated.filter(r => {
                 if (period === 'full') return !r.pay_period || r.pay_period === 'full';
@@ -168,8 +169,21 @@ function renderDriverTable(drivers, records) {
     const recMap = Object.fromEntries(records.map(r => [r.employee_id, r]));
     let totalPay = 0;
 
-    const rows = drivers.map((drv, idx) => {
-        const rec = recMap[drv.id];
+    // To handle deleted drivers, we collect all unique IDs from both active drivers and current records
+    const activeIds = drivers.map(d => d.id);
+    const recordIds = records.map(r => r.employee_id);
+    const allIds = [...new Set([...activeIds, ...recordIds])];
+
+    const rows = [];
+    allIds.forEach((id, idx) => {
+        const drv = drivers.find(d => d.id === id) || { id: id, isDeleted: true };
+        const rec = recMap[id];
+
+        // If it's a deleted driver with no record for THIS month/period, we skip them to avoid clutter
+        if (drv.isDeleted && !rec) return;
+
+        const drvName = drv.name || (rec?.employee_name || drv.id || '—');
+
         const orders = rec ? (rec.delivery_orders || 0) : 0;
         const price = rec ? (rec.order_price || 0) : 0;
         const orderPay = orders * price;
@@ -177,17 +191,22 @@ function renderDriverTable(drivers, records) {
         const savedBase = rec?.base_salary_paid !== undefined ? rec.base_salary_paid : (drv.base_salary || 0);
         if (rec) totalPay += final;
 
-        return `<tr data-drv-id="${drv.id}" data-drv-name="${escHtml(drv.name)}" class="${rec ? 'paid-row' : ''}">
-          <td data-label="ت" class="fw-600" style="color:var(--c-text-3);">${idx + 1}</td>
-          <td data-label="اسم السائق" class="fw-600">${escHtml(drv.name)}</td>
+        const shift = rec?.shift_type || drv.default_shift || '—';
+
+        rows.push(`<tr data-drv-id="${drv.id}" data-drv-name="${escHtml(drvName)}" data-drv-shift="${escHtml(shift)}" class="${rec ? 'paid-row' : ''}">
+          <td data-label="ت" class="serial-cell fw-600" style="color:var(--c-text-3);"></td>
+          <td data-label="اسم السائق" class="fw-600">
+            ${escHtml(drvName)}
+            ${drv.isDeleted ? ' <span class="text-danger" style="font-size:11px; margin-right:4px;">(محذوف)</span>' : ''}
+          </td>
           <td data-label="الراتب الأساسي">${formatCurrency(savedBase)}</td>
           <td data-label="عدد الطلبات">${orders.toLocaleString('en-US')}</td>
           <td data-label="سعر الطلب">${formatCurrency(price)}</td>
           <td data-label="مستحقات الطلبات" class="highlight-cell">${formatCurrency(orderPay)}</td>
           <td data-label="صافي المستحقات" class="highlight-cell fw-600">${rec ? formatCurrency(final) : '<span class="text-muted">—</span>'}</td>
           <td data-label="نوع الشفت">
-            ${(rec?.shift_type || drv.default_shift)
-                ? `<span class="badge ${(rec?.shift_type || drv.default_shift) === 'مسائي' ? 'badge-purple' : ((rec?.shift_type || drv.default_shift) === 'شفت كامل' ? 'badge-orange' : 'badge-blue')}" style="font-size:11px;">${rec?.shift_type || drv.default_shift}</span>`
+            ${(shift !== '—')
+                ? `<span class="badge ${shift === 'مسائي' ? 'badge-purple' : (shift === 'شفت كامل' ? 'badge-orange' : 'badge-blue')}" style="font-size:11px;">${shift}</span>`
                 : '<span style="color:var(--c-text-2);font-size:12px;">—</span>'}
           </td>
           <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escHtml(rec?.note || '')}">
@@ -203,13 +222,13 @@ function renderDriverTable(drivers, records) {
               ${(rec && canDelete()) ? `<button class="act-btn delete" title="حذف" onclick="deleteDrvRecord('${rec.id}')">
                 <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
               </button>` : ''}
-              ${canDelete() ? `<button class="act-btn delete" title="حذف السائق نهائياً" style="opacity:0.6;" onclick="deleteDriverProfile('${drv.id}', '${escHtml(drv.name)}')">
+              ${(!drv.isDeleted && canDelete()) ? `<button class="act-btn delete" title="حذف السائق نهائياً" style="opacity:0.6;" onclick="deleteDriverProfile('${drv.id}', '${escHtml(drvName)}')">
                 <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
               </button>` : ''}
 ` : ''}
             </div>
           </td>
-        </tr>`;
+        </tr>`);
     });
 
     rows.push(`<tr class="summary-row">
@@ -225,11 +244,18 @@ function renderDriverTable(drivers, records) {
 
 function filterDrivers() {
     const q = (document.getElementById('drv-search')?.value || '').toLowerCase().trim();
+    const shiftFilt = document.getElementById('drv-shift-filter')?.value || '';
     const tbody = document.getElementById('drv-tbody');
     if (!tbody) return;
+
     tbody.querySelectorAll('tr[data-drv-id]').forEach(row => {
         const name = (row.dataset.drvName || '').toLowerCase();
-        row.style.display = (!q || name.includes(q)) ? '' : 'none';
+        const shift = row.dataset.drvShift || '';
+
+        const nameMatch = !q || name.includes(q);
+        const shiftMatch = !shiftFilt || shift === shiftFilt;
+
+        row.style.display = (nameMatch && shiftMatch) ? '' : 'none';
     });
 }
 
@@ -358,6 +384,7 @@ async function saveDrvRecord() {
 
     const data = {
         employee_id: empId,
+        employee_name: emp?.name || '',
         month: _drvMonth,
         pay_period: _drvPeriod,
         shift_type: document.getElementById('drv-shift')?.value || '',

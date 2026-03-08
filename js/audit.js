@@ -111,7 +111,7 @@ function renderAuditTable(filter) {
     const timeStr = ts ? ts.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
 
     return `<tr class="audit-row" onclick="viewAuditDetail('${log.id}')" style="cursor:pointer">
-          <td style="width:32px;color:var(--c-text-2);font-size:11px;">${start + i + 1}</td>
+          <td class="serial-cell" style="width:32px;color:var(--c-text-2);font-size:11px;"></td>
           <td>
             <div class="user-info">
               <div class="user-avatar">

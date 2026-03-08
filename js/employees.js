@@ -6,6 +6,7 @@
 
 let _employees = [];
 let _editEmpId = null;
+let _selectedEmpIds = new Set();
 
 /** Checks if an employee role is a delivery driver */
 function isDriver(role) {
@@ -30,7 +31,8 @@ async function loadEmployees() {
         .orderBy('created_at', 'desc')
         .onSnapshot(snap => {
             _employees = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            renderEmployeeTable(_employees);
+            populateRoleFilter();
+            applyEmployeeFilters();
         }, err => {
             console.error('[employees] listener error:', err);
             showToast('فشل المزامنة اللحظية للموظفين', 'error');
@@ -53,8 +55,14 @@ function renderEmployeeTable(list) {
     }
 
     tbody.innerHTML = list.map((emp, i) => `
-    <tr data-emp-id="${emp.id}" data-emp-name="${escHtml(emp.name)}">
-      <td data-label="الرقم" class="text-muted">${i + 1}</td>
+    <tr data-emp-id="${emp.id}" data-emp-name="${escHtml(emp.name)}" class="${_selectedEmpIds.has(emp.id) ? 'selected-row' : ''}">
+      <td style="width:40px;">
+        <label class="custom-checkbox">
+          <input type="checkbox" ${_selectedEmpIds.has(emp.id) ? 'checked' : ''} onchange="toggleSelectEmp('${emp.id}', this.checked)">
+          <span class="checkmark"></span>
+        </label>
+      </td>
+      <td data-label="الرقم" class="text-muted serial-cell"></td>
       <td data-label="اسم الموظف" class="fw-600">${escHtml(emp.name)}</td>
       <td data-label="الراتب الأساسي" class="highlight-cell">${formatCurrency(emp.base_salary)}</td>
       <td data-label="المسمى الوظيفي">
@@ -77,19 +85,165 @@ function renderEmployeeTable(list) {
     </tr>`).join('');
 }
 
+// ─── Selection Logic ─────────────────────────────────────────────────────────
+
+function toggleSelectAllEmps(checked) {
+    const list = document.querySelectorAll('#emp-tbody input[type="checkbox"]');
+    list.forEach(cb => cb.checked = checked);
+
+    // Filtered list is what's currently in the table
+    // (Assuming current list is available globally or we re-filter)
+    // Actually better to just use the IDs of the employees currently shown in the table
+    const rows = document.querySelectorAll('#emp-tbody tr[data-emp-id]');
+    rows.forEach(row => {
+        const id = row.getAttribute('data-emp-id');
+        if (checked) _selectedEmpIds.add(id);
+        else _selectedEmpIds.delete(id);
+    });
+
+    onSelectionChange();
+}
+
+function toggleSelectEmp(id, checked) {
+    if (checked) _selectedEmpIds.add(id);
+    else _selectedEmpIds.delete(id);
+
+    // Update "Select All" state
+    const selectAllCb = document.getElementById('emp-select-all');
+    if (selectAllCb) {
+        const rows = document.querySelectorAll('#emp-tbody tr[data-emp-id]');
+        const allChecked = Array.from(rows).every(r => _selectedEmpIds.has(r.getAttribute('data-emp-id')));
+        selectAllCb.checked = allChecked;
+    }
+
+    onSelectionChange();
+}
+
+function onSelectionChange() {
+    const bar = document.getElementById('emp-bulk-actions');
+    const countEl = document.getElementById('emp-selected-count');
+    const selectedCount = _selectedEmpIds.size;
+
+    console.log('[Bulk] Selection changed:', selectedCount);
+
+    if (bar) {
+        if (selectedCount > 0) {
+            bar.classList.add('show');
+            if (countEl) countEl.textContent = selectedCount;
+        } else {
+            bar.classList.remove('show');
+        }
+    }
+
+    // Highlight selected rows
+    const rows = document.querySelectorAll('#emp-tbody tr[data-emp-id]');
+    rows.forEach(row => {
+        const id = row.getAttribute('data-emp-id');
+        if (_selectedEmpIds.has(id)) {
+            row.classList.add('selected-row');
+            const cb = row.querySelector('input[type="checkbox"]');
+            if (cb) cb.checked = true;
+        } else {
+            row.classList.remove('selected-row');
+            const cb = row.querySelector('input[type="checkbox"]');
+            if (cb) cb.checked = false;
+        }
+    });
+
+    // Update Select All checkbox
+    const selectAllCb = document.getElementById('emp-select-all');
+    if (selectAllCb && rows.length > 0) {
+        const allCheckedInView = Array.from(rows).every(r => _selectedEmpIds.has(r.getAttribute('data-emp-id')));
+        selectAllCb.checked = allCheckedInView;
+    }
+}
+
+function clearEmployeeSelection() {
+    _selectedEmpIds.clear();
+    const selectAllCb = document.getElementById('emp-select-all');
+    if (selectAllCb) selectAllCb.checked = false;
+
+    const checkboxes = document.querySelectorAll('#emp-tbody input[type="checkbox"]');
+    checkboxes.forEach(cb => cb.checked = false);
+
+    onSelectionChange();
+}
+
+async function bulkDeleteEmployees() {
+    if (!canDelete()) {
+        showToast('ليس لديك صلاحية الحذف.', 'error');
+        return;
+    }
+
+    const count = _selectedEmpIds.size;
+    if (count === 0) return;
+
+    const ok = await showConfirm(`هل أنت متأكد من حذف ${count} موظفين نهائياً؟`, 'حذف جماعي');
+    if (!ok) return;
+
+    const idsToDelete = Array.from(_selectedEmpIds);
+    let successCount = 0;
+
+    try {
+        const batch = db.batch();
+        idsToDelete.forEach(id => {
+            batch.delete(db.collection('employees').doc(id));
+        });
+
+        await batch.commit();
+        successCount = idsToDelete.length;
+
+        logAudit('حذف جماعي', 'موظفين', `${successCount} موظف`, `تم حذف مجموعة من الموظفين بشكل جماعي.`);
+        showToast(`تم حذف ${successCount} موظف بنجاح.`);
+
+        _selectedEmpIds.clear();
+        invalidateCache('employees');
+        onSelectionChange();
+    } catch (err) {
+        console.error('[employees] bulk delete error:', err);
+        showToast('حدث خطأ أثناء الحذف الجماعي.', 'error');
+    }
+}
+
 function bindEmployeeSearch() {
     const input = document.getElementById('emp-search');
-    if (!input) return;
-    input.addEventListener('input', () => {
-        const q = input.value.toLowerCase();
-        renderEmployeeTable(q
-            ? _employees.filter(e =>
-                e.name.toLowerCase().includes(q) ||
-                (e.role || '').toLowerCase().includes(q) ||
-                (e.phone || '').includes(q))
-            : _employees
-        );
+    const filter = document.getElementById('emp-role-filter');
+    if (input) input.addEventListener('input', applyEmployeeFilters);
+    if (filter) filter.addEventListener('change', applyEmployeeFilters);
+}
+
+function applyEmployeeFilters() {
+    const q = document.getElementById('emp-search')?.value.toLowerCase() || '';
+    const role = document.getElementById('emp-role-filter')?.value || '';
+
+    const filtered = _employees.filter(e => {
+        const matchesSearch = !q ||
+            e.name.toLowerCase().includes(q) ||
+            (e.role || '').toLowerCase().includes(q) ||
+            (e.phone || '').includes(q);
+
+        const matchesRole = !role || e.role === role;
+
+        return matchesSearch && matchesRole;
     });
+
+    renderEmployeeTable(filtered);
+}
+
+function populateRoleFilter() {
+    const filter = document.getElementById('emp-role-filter');
+    if (!filter) return;
+
+    const currentVal = filter.value;
+    const roles = [...new Set(_employees.map(e => e.role).filter(Boolean))].sort();
+
+    filter.innerHTML = '<option value="">الكل</option>' +
+        roles.map(r => `<option value="${escHtml(r)}">${escHtml(r)}</option>`).join('');
+
+    // Restore previous selection if still exists
+    if (roles.includes(currentVal)) {
+        filter.value = currentVal;
+    }
 }
 
 function openEmpModal(id = null) {

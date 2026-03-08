@@ -67,15 +67,18 @@ function renderSalaryTable(list) {
     let totalFinal = 0;
 
     const rows = list.map((sal, idx) => {
-        const emp = empMap[sal.employee_id] || {};
-        const empName = emp.name || sal.employee_id || '—';
-        const CACHE_NAME = 'payroll-system-v3';
+        const emp = empMap[sal.employee_id];
+        const empName = emp ? emp.name : (sal.employee_name || sal.employee_id || '—');
+        const isDeleted = !emp;
         totalFinal += sal.final_salary || 0;
 
         return `<tr data-sal-id="${sal.id}" data-emp-id="${sal.employee_id}">
-          <td data-label="ت" class="fw-600" style="color:var(--c-text-3);width:50px;">${idx + 1}</td>
-          <td data-label="اسم الموظف" class="fw-600">${escHtml(empName)}</td>
-          <td data-label="الراتب الأساسي">${formatCurrency(emp.base_salary || 0)}</td>
+          <td data-label="ت" class="serial-cell fw-600" style="color:var(--c-text-3);width:50px;"></td>
+          <td data-label="اسم الموظف" class="fw-600">
+            ${escHtml(empName)}
+            ${isDeleted ? ' <span class="text-danger" style="font-size:11px; margin-right:4px;">(محذوف)</span>' : ''}
+          </td>
+          <td data-label="الراتب الأساسي">${formatCurrency(emp ? emp.base_salary : 0)}</td>
           <td data-label="المكافأة" class="text-success fw-600">+${formatCurrency(sal.bonus || 0)}</td>
           <td data-label="الخصم">
             <span class="badge badge-red">−${formatCurrency(sal.deduction || 0)}</span>
@@ -232,7 +235,15 @@ async function saveSalary() {
     const saveBtn = document.getElementById('sal-save-btn');
     saveBtn.disabled = true;
 
-    const data = { employee_id: empId, month: _salMonth, bonus, deduction: deduct, final_salary: final, deduction_note: note };
+    const data = {
+        employee_id: empId,
+        employee_name: emp?.name || '',
+        month: _salMonth,
+        bonus,
+        deduction: deduct,
+        final_salary: final,
+        deduction_note: note
+    };
 
     try {
         if (_editSalId) {

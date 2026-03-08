@@ -82,6 +82,152 @@ button {
   font-family: inherit;
 }
 
+
+/* Ensure no flicker */
+
+/* Ensure no flicker */
+#login-section,
+#app-section {
+  display: none;
+}
+
+/* ═══════════════ CUSTOM CHECKBOX ═══════════════ */
+.custom-checkbox {
+  display: inline-block;
+  position: relative;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.custom-checkbox input {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+  height: 0;
+  width: 0;
+}
+
+.checkmark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 20px;
+  width: 20px;
+  background-color: var(--c-surface);
+  border: 2px solid var(--c-border);
+  border-radius: 6px;
+  transition: var(--tr);
+  box-shadow: var(--sh-sm);
+}
+
+.custom-checkbox:hover input~.checkmark {
+  border-color: var(--c-accent);
+}
+
+.custom-checkbox input:checked~.checkmark {
+  background-color: var(--c-accent);
+  border-color: var(--c-accent);
+}
+
+.checkmark:after {
+  content: "";
+  position: absolute;
+  display: none;
+}
+
+.custom-checkbox input:checked~.checkmark:after {
+  display: block;
+}
+
+.custom-checkbox .checkmark:after {
+  left: 6px;
+  top: 2px;
+  width: 5px;
+  height: 10px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ═══════════════ BULK ACTIONS BAR (FLOATING GLASS - BOTTOM FIXED) ═══════════════ */
+.bulk-actions-bar {
+  position: fixed !important;
+  bottom: 24px !important;
+  left: 50% !important;
+  transform: translateX(-50%) translateY(100px);
+  width: auto;
+  min-width: 380px;
+  background: var(--sidebar-glass) !important;
+  backdrop-filter: blur(var(--blur)) !important;
+  -webkit-backdrop-filter: blur(var(--blur)) !important;
+  color: #fff !important;
+  padding: 14px 14px 14px 32px !important;
+  border-radius: 60px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 32px !important;
+  z-index: 2147483647 !important;
+  /* Max z-index */
+  box-shadow: 0 15px 45px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  pointer-events: auto !important;
+}
+
+.bulk-actions-bar.show {
+  transform: translateX(-50%) translateY(0) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.bulk-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+  font-size: 14.5px;
+  white-space: nowrap;
+}
+
+.selected-count {
+  background: var(--c-accent);
+  color: white;
+  padding: 3px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  box-shadow: var(--sh-glow);
+}
+
+.bulk-btns {
+  display: flex;
+  gap: 12px;
+}
+
+.bulk-btns .btn {
+  padding: 8px 16px;
+  border-radius: 24px;
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bulk-btns .btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Highlight selected row */
+.selected-row td {
+  background-color: var(--c-accent-soft) !important;
+}
+
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -941,6 +1087,19 @@ button {
   text-align: right;
   /* Explicit RTL alignment */
   border-bottom: 1px solid var(--c-border);
+}
+
+/* ── CSS Counters for Serial Numbers ── */
+.data-table tbody {
+  counter-reset: rowNumber;
+}
+
+.data-table tbody tr:not(.summary-row):not([style*="display: none"]) {
+  counter-increment: rowNumber;
+}
+
+.serial-cell::before {
+  content: counter(rowNumber);
 }
 
 .tbl-actions {
