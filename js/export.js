@@ -139,7 +139,9 @@ function _esc(s) {
 // ═══════════════════════════════════════════════════════════════
 
 function exportEmployees(format) {
-    const list = (typeof _employees !== 'undefined' ? _employees : [])
+    const list = (typeof _filteredEmployees !== 'undefined' && _filteredEmployees.length > 0
+        ? _filteredEmployees
+        : (typeof _employees !== 'undefined' ? _employees : []))
         .filter(e => !isDriver(e.role));
     if (!list.length) { showToast('لا توجد بيانات للتصدير.', 'warning'); return; }
 
@@ -165,7 +167,9 @@ function exportEmployees(format) {
 // ═══════════════════════════════════════════════════════════════
 
 function exportSalaries(format) {
-    const sals = typeof _salaries !== 'undefined' ? _salaries : [];
+    const sals = (typeof _filteredSalaries !== 'undefined' && _filteredSalaries.length > 0)
+        ? _filteredSalaries
+        : (typeof _salaries !== 'undefined' ? _salaries : []);
     const emps = typeof _allEmps !== 'undefined' ? _allEmps : [];
     const month = typeof _salMonth !== 'undefined' ? _salMonth : '—';
 
@@ -214,7 +218,10 @@ function exportSalaries(format) {
 // ═══════════════════════════════════════════════════════════════
 
 function exportDrivers(format) {
-    const drvs = typeof _driverEmps !== 'undefined' ? _driverEmps : [];
+    let drvs = (typeof _filteredDriverEmps !== 'undefined' && _filteredDriverEmps.length > 0
+        ? _filteredDriverEmps
+        : (typeof _driverEmps !== 'undefined' ? _driverEmps : []));
+
     const recs = typeof _driverRecords !== 'undefined' ? _driverRecords : [];
     const month = typeof _drvMonth !== 'undefined' ? _drvMonth : '—';
     const period = typeof _drvPeriod !== 'undefined' ? _drvPeriod : 'full';
@@ -230,7 +237,7 @@ function exportDrivers(format) {
     if (!drvs.length) { showToast('لا يوجد سائقون للتصدير.', 'warning'); return; }
 
     const recMap = Object.fromEntries(recs.map(r => [r.employee_id, r]));
-    const headers = ['#', 'السائق', 'فترة الدفع', 'الوردية', 'الراتب الأساسي (د.ع)', 'عدد الطلبات',
+    const headers = ['#', 'السائق', 'فترة الدفع', 'نوع الشفت', 'الراتب الأساسي (د.ع)', 'عدد الطلبات',
         'سعر الطلب (د.ع)', 'أجر الطلبات (د.ع)', 'مكافأة (د.ع)', 'خصم (د.ع)', 'الراتب النهائي (د.ع)', 'ملاحظات'];
 
     const shiftLabel = s => s === 'مسائي' ? 'مسائي' : (s === 'صباحي' ? 'صباحي' : '—');
@@ -240,13 +247,14 @@ function exportDrivers(format) {
     if (format === 'excel') {
         const dataRows = drvs.map((drv, i) => {
             const rec = recMap[drv.id];
+            const shift = rec?.shift_type || drv.default_shift || '—';
             const orders = rec ? (rec.delivery_orders || 0) : 0;
             const price = rec ? (rec.order_price || 0) : 0;
             const final = rec ? (rec.final_salary || 0) : 0;
             const savedBase = rec?.base_salary_paid !== undefined ? rec.base_salary_paid : (drv.base_salary || 0);
             const drvName = drv.id ? drv.name : (rec?.employee_name ? rec.employee_name + ' (محذوف)' : '—');
             totalPay += final;
-            return [i + 1, drvName, periodLabel, shiftLabel(rec?.shift_type),
+            return [i + 1, drvName, periodLabel, shift,
                 savedBase, orders, price,
             orders * price, rec ? (rec.bonus || 0) : 0,
             rec ? (rec.deduction || 0) : 0, final, rec ? (rec.note || '') : ''];
@@ -280,6 +288,7 @@ function exportDrivers(format) {
     } else {
         const rows = drvs.map((drv, i) => {
             const rec = recMap[drv.id];
+            const shift = rec?.shift_type || drv.default_shift || '—';
             const orders = rec ? (rec.delivery_orders || 0) : 0;
             const price = rec ? (rec.order_price || 0) : 0;
             const final = rec ? (rec.final_salary || 0) : 0;
@@ -290,7 +299,7 @@ function exportDrivers(format) {
                 i + 1,
                 drvName,
                 periodLabel,
-                shiftLabel(rec?.shift_type),
+                shift,
                 formatCurrency(savedBase),
                 orders.toLocaleString('en-US'),
                 formatCurrency(price),

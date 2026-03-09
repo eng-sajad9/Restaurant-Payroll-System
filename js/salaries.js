@@ -4,6 +4,7 @@
  */
 
 let _salaries = [];
+let _filteredSalaries = []; // Track currently filtered records for export
 let _allEmps = [];
 let _editSalId = null;
 let _salMonth = getCurrentMonth();
@@ -41,7 +42,8 @@ async function loadSalaries(month) {
         .where('month', '==', month)
         .onSnapshot(snap => {
             _salaries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            renderSalaryTable(_salaries);
+            populateSalRoleFilter();
+            filterSalaries();
         }, err => {
             console.error('[salaries] listener error:', err);
             showToast('فشل المزامنة اللحظية للرواتب.', 'error');
@@ -348,12 +350,42 @@ function applyAbsenceDeduction() {
     }
 }
 
-function filterSalaries() {
-    const q = document.getElementById('sal-search').value.toLowerCase();
+function populateSalRoleFilter() {
+    const filter = document.getElementById('sal-role-filter');
+    if (!filter) return;
+
+    const currentVal = filter.value;
     const empMap = Object.fromEntries(_allEmps.map(e => [e.id, e]));
-    const filtered = _salaries.filter(sal => {
+
+    // Get roles of employees who have a salary record this month
+    const roles = [...new Set(_salaries.map(s => {
+        const emp = empMap[s.employee_id];
+        return emp?.role || '';
+    }).filter(Boolean))].sort();
+
+    filter.innerHTML = '<option value="">الكل</option>' +
+        roles.map(r => `<option value="${escHtml(r)}">${escHtml(r)}</option>`).join('');
+
+    if (roles.includes(currentVal)) {
+        filter.value = currentVal;
+    }
+}
+
+function filterSalaries() {
+    const q = (document.getElementById('sal-search')?.value || '').toLowerCase().trim();
+    const roleFilt = document.getElementById('sal-role-filter')?.value || '';
+    const empMap = Object.fromEntries(_allEmps.map(e => [e.id, e]));
+
+    _filteredSalaries = _salaries.filter(sal => {
         const emp = empMap[sal.employee_id] || {};
-        return (emp.name || '').toLowerCase().includes(q);
+        const name = (emp.name || '').toLowerCase();
+        const role = emp.role || '';
+
+        const nameMatch = !q || name.includes(q);
+        const roleMatch = !roleFilt || role === roleFilt;
+
+        return nameMatch && roleMatch;
     });
-    renderSalaryTable(filtered);
+
+    renderSalaryTable(_filteredSalaries);
 }

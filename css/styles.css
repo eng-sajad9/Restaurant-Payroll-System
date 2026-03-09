@@ -2,57 +2,64 @@
    RESTAURANT PAYROLL MANAGEMENT SYSTEM — STYLES
    ===================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&family=Inter:wght@300;400;500;600;700&family=Tajawal:wght@300;400;500;700;800&display=swap');
 
-/* ── DESIGN TOKENS ── */
 /* ── DESIGN TOKENS ── */
 :root {
-  /* Premium Slate & Blue Palette */
-  --h-primary: 222;
-  --c-primary: hsl(var(--h-primary), 47%, 11%);
-  --c-primary-lt: hsl(var(--h-primary), 33%, 21%);
+  /* Premium Deep Navy & Gold/Accent Palette - Classic & Elegant */
+  --h-primary: 215;
+  --c-primary: hsl(var(--h-primary), 35%, 15%);
+  /* Deep Navy #192535 */
+  --c-primary-lt: hsl(var(--h-primary), 28%, 22%);
+  /* Lighter Navy */
 
-  --h-accent: 221;
-  --c-accent: hsl(var(--h-accent), 83%, 53%);
-  --c-accent-hover: hsl(var(--h-accent), 75%, 46%);
-  --c-accent-soft: hsla(var(--h-accent), 83%, 53%, 0.1);
+  --h-accent: 215;
+  --c-accent: hsl(var(--h-accent), 85%, 45%);
+  /* Royal Blue Accent */
+  --c-accent-hover: hsl(var(--h-accent), 75%, 38%);
+  --c-accent-soft: hsla(var(--h-accent), 85%, 45%, 0.08);
 
-  --c-bg: #f8fafc;
+  --c-bg: #f4f6f9;
+  /* Slightly cooler light grey background */
   --c-surface: #ffffff;
   --c-border: #e2e8f0;
-  --c-text: #0f172a;
+  --c-text: #1e293b;
   --c-text-2: #475569;
   --c-text-3: #94a3b8;
 
-  /* Semantic Colors */
-  --c-success: #10b981;
+  /* Semantic Colors - Elegant Pastels for Badges/Status */
+  --c-success: #059669;
   --c-success-bg: #ecfdf5;
-  --c-error: #ef4444;
+  --c-error: #dc2626;
   --c-error-bg: #fef2f2;
-  --c-warning: #f59e0b;
+  --c-warning: #d97706;
   --c-warning-bg: #fffbeb;
 
-  /* Glassmorphism */
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-border: rgba(255, 255, 255, 0.3);
-  --sidebar-glass: rgba(15, 23, 42, 0.9);
-  --blur: 16px;
+  /* Premium Glassmorphism */
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.4);
+  --sidebar-glass: rgba(15, 23, 42, 0.95);
+  /* Deeper sidebar glass */
+  --blur: 20px;
 
-  --sidebar-w: 260px;
-  --header-h: 64px;
+  --sidebar-w: 270px;
+  /* Slightly wider sidebar for breathing room */
+  --header-h: 70px;
+  /* Taller header */
 
-  /* Refined Shadows */
-  --sh-sm: 0 1px 2px rgba(0, 0, 0, .05);
-  --sh: 0 4px 12px -2px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-  --sh-md: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
-  --sh-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  --sh-glow: 0 0 20px rgba(37, 99, 235, 0.15);
+  /* Refined Premium Shadows (Soft, extensive) */
+  --sh-sm: 0 2px 4px rgba(0, 0, 0, .04);
+  --sh: 0 4px 15px -3px rgba(0, 0, 0, 0.04), 0 2px 6px -2px rgba(0, 0, 0, 0.02);
+  --sh-md: 0 10px 25px -5px rgba(0, 0, 0, 0.06), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
+  --sh-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 0 15px rgba(0, 0, 0, 0.03);
+  --sh-glow: 0 8px 16px hsla(var(--h-accent), 85%, 45%, 0.25);
 
-  --r-sm: 6px;
-  --r: 10px;
-  --r-lg: 16px;
+  /* Modern Border Radii */
+  --r-sm: 8px;
+  --r: 12px;
+  --r-lg: 18px;
 
-  --tr: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --tr: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 /* ── RESET ── */
@@ -66,8 +73,9 @@
 
 html,
 body {
-  font-family: 'IBM Plex Sans Arabic', 'Inter', -apple-system, sans-serif;
-  font-size: 14px;
+  font-family: 'Tajawal', 'Almarai', -apple-system, sans-serif;
+  font-size: 14.5px;
+  /* Slightly larger base font for readability */
   color: var(--c-text);
   background: var(--c-bg);
   -webkit-font-smoothing: antialiased;
@@ -461,24 +469,30 @@ button {
 }
 
 .btn-primary {
-  background: var(--c-accent);
+  background: linear-gradient(135deg, var(--c-accent), var(--c-accent-hover));
   color: #fff;
+  border-radius: var(--r);
+  /* More rounded modern buttons */
+  box-shadow: 0 4px 10px hsla(var(--h-accent), 85%, 45%, 0.2);
 }
 
 .btn-primary:hover {
-  background: var(--c-accent-hover);
-  box-shadow: var(--sh-sm);
+  transform: translateY(-1px);
+  box-shadow: var(--sh-glow);
 }
 
 .btn-secondary {
   background: var(--c-surface);
   color: var(--c-text);
   border: 1px solid var(--c-border);
+  border-radius: var(--r);
 }
 
 .btn-secondary:hover {
   background: var(--c-bg);
-  box-shadow: var(--sh-sm);
+  box-shadow: var(--sh-md);
+  transform: translateY(-1px);
+  border-color: #cbd5e1;
 }
 
 .btn-danger {
@@ -635,10 +649,11 @@ button {
 }
 
 .nav-item.active {
-  background: var(--c-accent-soft);
+  background: linear-gradient(90deg, var(--c-accent-soft), transparent);
   color: #fff;
-  box-shadow: var(--sh-glow);
-  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-right: 3px solid var(--c-accent);
+  /* Arabic RTL indicator */
+  border-radius: var(--r) 0 0 var(--r);
 }
 
 .nav-item.active svg {
@@ -1035,58 +1050,56 @@ button {
 /* =====================================================
    TABLES
    ===================================================== */
+/* ── Table Styling ── */
 .table-wrap {
   overflow-x: auto;
 }
 
 .data-table {
   width: 100%;
-  border-collapse: collapse;
-}
-
-.data-table thead th {
-  background: var(--c-bg);
-  padding: 9px 12px;
+  border-collapse: separate;
+  border-spacing: 0;
   text-align: right;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0;
-  color: var(--c-text-2);
-  border-bottom: 1px solid var(--c-border);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
+  min-width: 800px;
 }
 
-.data-table thead th:hover {
-  color: var(--c-text);
+.data-table th,
+.data-table td {
+  padding: 16px 20px;
+  /* Increased padding for breathability */
+  border-bottom: 1px solid var(--c-bg);
+  /* Softer divider */
+  font-size: 14.5px;
+}
+
+.data-table th {
+  font-weight: 700;
+  color: var(--c-text-2);
+  background: var(--c-surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  white-space: nowrap;
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+}
+
+.data-table tbody tr {
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.data-table tbody tr:hover {
+  background-color: #f8fafc;
+  /* Very soft hover bg */
+}
+
+/* Ensure empty state or summary rows don't look clickable if not meant to be */
+.data-table tbody tr.summary-row:hover {
+  background-color: transparent;
 }
 
 .data-table thead th.sorted {
   color: var(--c-accent);
-}
-
-.data-table tbody tr {
-  border-bottom: 1px solid var(--c-border);
-  transition: background .12s;
-  background: var(--c-surface);
-}
-
-.data-table tbody tr:last-child {
-  border-bottom: none;
-}
-
-.data-table tbody tr:hover {
-  background: #f1f5f9;
-}
-
-.data-table td {
-  padding: 12px 14px;
-  font-size: 13.5px;
-  vertical-align: middle;
-  text-align: right;
-  /* Explicit RTL alignment */
-  border-bottom: 1px solid var(--c-border);
 }
 
 /* ── CSS Counters for Serial Numbers ── */
@@ -1318,6 +1331,10 @@ button {
 .search-input:focus {
   border-color: var(--c-accent);
   box-shadow: 0 0 0 2px rgba(37, 99, 235, .1);
+}
+
+.search-input.error {
+  border-color: var(--c-error);
 }
 
 .filter-select {

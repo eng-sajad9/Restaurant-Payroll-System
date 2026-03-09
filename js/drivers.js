@@ -7,6 +7,7 @@
  */
 
 let _driverRecords = [];
+let _filteredDriverEmps = []; // Track currently filtered drivers for export
 let _driverEmps = [];
 let _editDrvId = null;
 let _drvMonth = getCurrentMonth();
@@ -149,6 +150,8 @@ async function loadDriverPage(month, period) {
                 return r.pay_period === period;
             });
 
+            // Re-apply filters whenever data changes to keep _filteredDriverEmps in sync
+            filterDrivers();
             renderDriverTable(_driverEmps, _driverRecords);
         }, err => {
             console.error('[drivers] page listener error:', err);
@@ -246,8 +249,20 @@ function filterDrivers() {
     const q = (document.getElementById('drv-search')?.value || '').toLowerCase().trim();
     const shiftFilt = document.getElementById('drv-shift-filter')?.value || '';
     const tbody = document.getElementById('drv-tbody');
-    if (!tbody) return;
 
+    _filteredDriverEmps = _driverEmps.filter(drv => {
+        const name = (drv.name || '').toLowerCase();
+        // Since we filter by shift in the UI, we should extract the shift for this driver/period
+        // matching the logic in renderDriverTable:
+        const rec = _driverRecords.find(r => r.employee_id === drv.id);
+        const shift = rec?.shift_type || drv.default_shift || '—';
+
+        const nameMatch = !q || name.includes(q);
+        const shiftMatch = !shiftFilt || shift === shiftFilt;
+        return nameMatch && shiftMatch;
+    });
+
+    if (!tbody) return;
     tbody.querySelectorAll('tr[data-drv-id]').forEach(row => {
         const name = (row.dataset.drvName || '').toLowerCase();
         const shift = row.dataset.drvShift || '';

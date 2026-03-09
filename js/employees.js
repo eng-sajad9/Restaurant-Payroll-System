@@ -5,6 +5,7 @@
  */
 
 let _employees = [];
+let _filteredEmployees = [];
 let _editEmpId = null;
 let _selectedEmpIds = new Set();
 
@@ -216,7 +217,7 @@ function applyEmployeeFilters() {
     const q = document.getElementById('emp-search')?.value.toLowerCase() || '';
     const role = document.getElementById('emp-role-filter')?.value || '';
 
-    const filtered = _employees.filter(e => {
+    _filteredEmployees = _employees.filter(e => {
         const matchesSearch = !q ||
             e.name.toLowerCase().includes(q) ||
             (e.role || '').toLowerCase().includes(q) ||
@@ -227,7 +228,7 @@ function applyEmployeeFilters() {
         return matchesSearch && matchesRole;
     });
 
-    renderEmployeeTable(filtered);
+    renderEmployeeTable(_filteredEmployees);
 }
 
 function populateRoleFilter() {
