@@ -1,8 +1,6 @@
-﻿/**
+/**
  * firebase-config.js
- * Firebase initialization.
- * !! REPLACE the placeholder values below with your own Firebase project credentials !!
- * Get them from: https://console.firebase.google.com â†’ Project Settings â†’ Your apps
+ * Firebase initialization with offline-first optimizations.
  */
 
 const firebaseConfig = {
@@ -19,15 +17,21 @@ const firebaseConfig = {
 // Initialize the Firebase app
 firebase.initializeApp(firebaseConfig);
 
-// Enable Offline Persistence
-firebase.firestore().enablePersistence().catch((err) => {
-    if (err.code == 'failed-precondition') {
-        console.warn('Persistence failed: Multiple tabs open');
-    } else if (err.code == 'unimplemented') {
-        console.warn('Persistence is not supported by this browser');
+// ── Firestore settings MUST be set BEFORE any other Firestore calls ──
+// CACHE_SIZE_UNLIMITED → Firestore will never evict cached data from IndexedDB
+firebase.firestore().settings({
+    cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
+});
+
+// Enable Offline Persistence (stores data in IndexedDB so app works offline)
+// synchronizeTabs: true allows all open tabs to share the same offline cache
+firebase.firestore().enablePersistence({ synchronizeTabs: true }).catch((err) => {
+    if (err.code === 'failed-precondition') {
+        console.warn('[Firebase] Persistence: multiple tabs open, only the first tab has persistence.');
+    } else if (err.code === 'unimplemented') {
+        console.warn('[Firebase] Persistence not supported by this browser.');
     }
 });
 
-// Firestore instance â€” shared across all modules
+// Firestore instance — shared across all modules
 const db = firebase.firestore();
-

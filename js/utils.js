@@ -284,43 +284,110 @@ function getUserAvatarIcon() {
         <circle cx="12" cy="7" r="4"></circle>
     </svg>`;
 }
-// ─── Data Caching Layer ──────────────────────────────────────────────────────
+// ─── Data Caching Layer (3-layer: Memory → localStorage → Firestore) ───────
+//
+// Layer 1: in-memory (_data)       — fastest, lives until page close
+// Layer 2: localStorage            — survives page refresh, TTL = 15 min
+// Layer 3: Firestore cache-first   — IndexedDB offline cache, then network
+//
+// Result: after first load, the app reads ZERO docs from Firestore
+// for the next 15 minutes, even if the page is refreshed.
 
-/**
- * Global cache for application data to minimize Firestore reads.
- */
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 دقيقة
+const LS_PREFIX    = 'arc_'; // arc = app-read-cache
+
 window.appCache = {
-    _data: {},
-    _promises: {},
+    _data: {},      // Layer 1: memory
+    _promises: {},  // Dedup in-flight requests
 
-    /**
-     * Get data from cache or fetch from Firestore.
-     */
+    // ── Layer 2 helpers ──
+    _lsRead(col) {
+        try {
+            const raw = localStorage.getItem(LS_PREFIX + col);
+            if (!raw) return null;
+            const { data, ts } = JSON.parse(raw);
+            if (Date.now() - ts > CACHE_TTL_MS) {
+                localStorage.removeItem(LS_PREFIX + col);
+                return null; // منتهي الصلاحية
+            }
+            return data;
+        } catch { return null; }
+    },
+
+    _lsWrite(col, data) {
+        try {
+            localStorage.setItem(LS_PREFIX + col, JSON.stringify({ data, ts: Date.now() }));
+        } catch (e) {
+            // localStorage full — remove oldest entry and retry once
+            try {
+                for (const k of Object.keys(localStorage)) {
+                    if (k.startsWith(LS_PREFIX)) { localStorage.removeItem(k); break; }
+                }
+                localStorage.setItem(LS_PREFIX + col, JSON.stringify({ data, ts: Date.now() }));
+            } catch { /* ignore */ }
+        }
+    },
+
+    _lsClear(col) {
+        try {
+            if (col) {
+                localStorage.removeItem(LS_PREFIX + col);
+            } else {
+                // مسح كل الكاش
+                for (const k of Object.keys(localStorage)) {
+                    if (k.startsWith(LS_PREFIX)) localStorage.removeItem(k);
+                }
+            }
+        } catch { /* ignore */ }
+    },
+
+    // ── Main get ──
     async get(collectionName) {
-        // If already in data cache, return it
+        // Layer 1: memory
         if (this._data[collectionName]) {
             return this._data[collectionName];
         }
 
-        // If a fetch is already in progress, wait for it
+        // Dedup parallel calls
         if (this._promises[collectionName]) {
             return this._promises[collectionName];
         }
 
         this._promises[collectionName] = (async () => {
+            // Layer 2: localStorage
+            const lsData = this._lsRead(collectionName);
+            if (lsData) {
+                console.log(`[Cache] ✅ localStorage hit: ${collectionName} (${lsData.length} docs)`);
+                this._data[collectionName] = lsData;
+                return lsData;
+            }
+
+            // Layer 3: Firestore cache-first (IndexedDB), then network
             try {
-                console.log(`[Cache] Fetching: ${collectionName}`);
-                const snap = await db.collection(collectionName).get();
+                let snap, fromCache = true;
+                try {
+                    // جرّب الـ IndexedDB أولاً (لا قراءات شبكة)
+                    snap = await db.collection(collectionName).get({ source: 'cache' });
+                    console.log(`[Cache] ✅ Firestore IndexedDB hit: ${collectionName}`);
+                } catch {
+                    // الـ cache فارغ → اجلب من الشبكة
+                    fromCache = false;
+                    snap = await db.collection(collectionName).get({ source: 'server' });
+                    console.log(`[Cache] 🌐 Network fetch: ${collectionName} (${snap.docs.length} docs)`);
+                }
+
                 const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 this._data[collectionName] = data;
+                this._lsWrite(collectionName, data);
 
-                if (window.updateUsageStats) {
+                if (!fromCache && window.updateUsageStats) {
                     window.updateUsageStats(snap.docs.length, 0);
                 }
                 return data;
+
             } catch (err) {
-                console.error(`[Cache] Failed to fetch ${collectionName}:`, err);
-                return []; // Return empty array on failure instead of throwing
+                console.error(`[Cache] ❌ Failed: ${collectionName}`, err);
+                return [];
             } finally {
                 delete this._promises[collectionName];
             }
@@ -329,9 +396,11 @@ window.appCache = {
         return this._promises[collectionName];
     },
 
+    // ── Invalidate (after write operations) ──
     invalidate(collectionName) {
-        console.log(`[Cache] Invalidating: ${collectionName}`);
+        console.log(`[Cache] 🗑 Invalidate: ${collectionName}`);
         delete this._data[collectionName];
+        this._lsClear(collectionName);
     }
 };
 
@@ -391,3 +460,46 @@ if (document.readyState === 'loading') {
 } else {
     initConnectivityMonitor();
 }
+
+// ─── Mobile Sidebar Toggle ───────────────────────────────────────────────────
+
+function openSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar) sidebar.classList.add('open');
+    if (overlay) {
+        overlay.style.display = 'block';
+        requestAnimationFrame(() => overlay.classList.add('show'));
+    }
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar) sidebar.classList.remove('open');
+    if (overlay) {
+        overlay.classList.remove('show');
+        setTimeout(() => { overlay.style.display = ''; }, 320);
+    }
+    document.body.style.overflow = '';
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar && sidebar.classList.contains('open')) {
+        closeSidebar();
+    } else {
+        openSidebar();
+    }
+}
+
+// إغلاق تلقائي عند النقر على أي عنصر بالقائمة الجانبية على الجوال
+document.addEventListener('DOMContentLoaded', () => {
+    const navItems = document.querySelectorAll('#sidebar .nav-item');
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            if (window.innerWidth <= 768) closeSidebar();
+        });
+    });
+});
