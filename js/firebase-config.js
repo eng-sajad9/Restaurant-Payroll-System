@@ -4,14 +4,14 @@
  */
 
 const firebaseConfig = {
-    apiKey: "AIzaSyCWUUrBMGpQ6KPirJFJ6okCp348YAbE5K8",
-    authDomain: "maing-rust.firebaseapp.com",
-    databaseURL: "https://maing-rust-default-rtdb.firebaseio.com",
-    projectId: "maing-rust",
-    storageBucket: "maing-rust.firebasestorage.app",
-    messagingSenderId: "11823919696",
-    appId: "1:11823919696:web:cdc0cb9dfe3928c3be5755",
-    measurementId: "G-QS2TNT6V78"
+   apiKey: "AIzaSyCWUUrBMGpQ6KPirJFJ6okCp348YAbE5K8",
+  authDomain: "maing-rust.firebaseapp.com",
+  databaseURL: "https://maing-rust-default-rtdb.firebaseio.com",
+  projectId: "maing-rust",
+  storageBucket: "maing-rust.firebasestorage.app",
+  messagingSenderId: "11823919696",
+  appId: "1:11823919696:web:cdc0cb9dfe3928c3be5755",
+  measurementId: "G-QS2TNT6V78"
 };
 
 // Initialize the Firebase app
