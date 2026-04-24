@@ -4,7 +4,7 @@
  */
 
 const firebaseConfig = {
-   apiKey: "AIzaSyCWUUrBMGpQ6KPirJFJ6okCp348YAbE5K8",
+     apiKey: "AIzaSyCWUUrBMGpQ6KPirJFJ6okCp348YAbE5K8",
   authDomain: "maing-rust.firebaseapp.com",
   databaseURL: "https://maing-rust-default-rtdb.firebaseio.com",
   projectId: "maing-rust",
