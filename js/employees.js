@@ -25,19 +25,40 @@ async function initEmployees() {
 let _empUnsub = null;
 
 async function loadEmployees() {
-    if (_empUnsub) _empUnsub();
-    showTableLoading('emp-tbody', 6);
+    if (_empUnsub) { supabase.removeChannel(_empUnsub); _empUnsub = null; }
+    showTableLoading('emp-tbody', 7);
 
-    _empUnsub = db.collection('employees')
-        .orderBy('created_at', 'desc')
-        .onSnapshot(snap => {
-            _employees = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            populateRoleFilter();
-            applyEmployeeFilters();
-        }, err => {
-            console.error('[employees] listener error:', err);
-            showToast('فشل المزامنة اللحظية للموظفين', 'error');
-        });
+    try {
+        const { data, error } = await supabase
+            .from('employees')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        _employees = data || [];
+        populateRoleFilter();
+        applyEmployeeFilters();
+
+        _empUnsub = supabase
+            .channel('public:employees')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, payload => {
+                if (payload.eventType === 'INSERT') {
+                    _employees.unshift(payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    const idx = _employees.findIndex(e => e.id === payload.new.id);
+                    if (idx > -1) _employees[idx] = payload.new;
+                } else if (payload.eventType === 'DELETE') {
+                    _employees = _employees.filter(e => e.id !== payload.old.id);
+                }
+                populateRoleFilter();
+                applyEmployeeFilters();
+            })
+            .subscribe();
+
+    } catch (err) {
+        console.error('[employees] load error:', err);
+        showToast('فشل جلب الموظفين', 'error');
+    }
 }
 
 function renderEmployeeTable(list) {
@@ -45,7 +66,7 @@ function renderEmployeeTable(list) {
     if (!tbody) return;
 
     if (!list.length) {
-        tbody.innerHTML = `<tr><td colspan="6">
+        tbody.innerHTML = `<tr><td colspan="7">
       <div class="empty-state">
         <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <strong>لا يوجد موظفون</strong>
@@ -55,35 +76,67 @@ function renderEmployeeTable(list) {
         return;
     }
 
-    tbody.innerHTML = list.map((emp, i) => `
-    <tr data-emp-id="${emp.id}" data-emp-name="${escHtml(emp.name)}" class="${_selectedEmpIds.has(emp.id) ? 'selected-row' : ''}">
-      <td style="width:40px;">
-        <label class="custom-checkbox">
-          <input type="checkbox" ${_selectedEmpIds.has(emp.id) ? 'checked' : ''} onchange="toggleSelectEmp('${emp.id}', this.checked)">
-          <span class="checkmark"></span>
-        </label>
-      </td>
-      <td data-label="الرقم" class="text-muted serial-cell"></td>
-      <td data-label="اسم الموظف" class="fw-600">${escHtml(emp.name)}</td>
-      <td data-label="الراتب الأساسي" class="highlight-cell">${formatCurrency(emp.base_salary)}</td>
-      <td data-label="المسمى الوظيفي">
-        <span class="badge ${getRoleBadgeClass(emp.role)}">${escHtml(emp.role)}</span>
-      </td>
-      <td data-label="رقم الهاتف" class="text-muted">${escHtml(emp.phone || '—')}</td>
-      <td data-label="الإجراءات">
-        <div class="tbl-actions">
-          ${canWrite() ? `
-          <button class="act-btn edit" title="تعديل" onclick="openEmpModal('${emp.id}')">
-            <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          ${canDelete() ? `
-          <button class="act-btn delete" title="حذف" onclick="deleteEmployee('${emp.id}')">
-            <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-          </button>` : ''}
-` : ''}
-        </div>
-      </td>
-    </tr>`).join('');
+    const arabicCountryToCode = {
+        'عراقي': 'iq', 'عراق': 'iq', 'العراق': 'iq',
+        'مصري': 'eg', 'مصر': 'eg',
+        'بنغلاديشي': 'bd', 'بنغلادش': 'bd', 'بنغلاديش': 'bd',
+        'باكستاني': 'pk', 'باكستان': 'pk'
+    };
+
+    tbody.innerHTML = list.map((emp, i) => {
+        const nat = (emp.nationality || '').trim();
+        const gov = (emp.governorate || '').trim();
+        let natHtml = '<span class="text-muted">—</span>';
+        if (nat) {
+            const code = arabicCountryToCode[nat] || '';
+            let flagHtml = '';
+            if (code) {
+                flagHtml = `<img src="https://flagcdn.com/16x12/${code}.png" style="width: 16px; height: 12px; border-radius: 2px; border: 1px solid var(--c-border); flex-shrink: 0;" alt="${escHtml(nat)}">`;
+            } else {
+                flagHtml = `<span style="font-size: 14px; line-height: 1;">🌍</span>`;
+            }
+            let displayText = nat;
+            if (nat === 'عراقي' && gov) {
+                displayText += ` (${gov})`;
+            }
+            natHtml = `<span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
+                ${flagHtml}
+                <span>${escHtml(displayText)}</span>
+            </span>`;
+        }
+
+        return `
+        <tr data-emp-id="${emp.id}" data-emp-name="${escHtml(emp.name)}" class="${_selectedEmpIds.has(emp.id) ? 'selected-row' : ''}">
+          <td style="width:40px;">
+            <label class="custom-checkbox">
+              <input type="checkbox" ${_selectedEmpIds.has(emp.id) ? 'checked' : ''} onchange="toggleSelectEmp('${emp.id}', this.checked)">
+              <span class="checkmark"></span>
+            </label>
+          </td>
+          <td data-label="الرقم" class="text-muted serial-cell"></td>
+          <td data-label="اسم الموظف" class="fw-600">${escHtml(emp.name)}</td>
+          <td data-label="الجنسية / البلد">${natHtml}</td>
+          <td data-label="الراتب الأساسي" class="highlight-cell">${formatCurrency(emp.base_salary)}</td>
+          <td data-label="المسمى الوظيفي">
+            <span class="badge ${getRoleBadgeClass(emp.role)}">${escHtml(emp.role)}</span>
+          </td>
+          <td data-label="رقم الهاتف" class="text-muted">${escHtml(emp.phone || '—')}</td>
+          <td data-label="الإجراءات">
+            <div class="tbl-actions">
+              ${canWrite() ? `
+              <button class="act-btn view" title="تعديل" onclick="openEmpModal('${emp.id}')">
+                <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                تعديل
+              </button>
+              ${canDelete() ? `
+              <button class="act-btn delete" title="حذف" onclick="deleteEmployee('${emp.id}')">
+                <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              </button>` : ''}
+    ` : ''}
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
 }
 
 // ─── Selection Logic ─────────────────────────────────────────────────────────
@@ -186,12 +239,13 @@ async function bulkDeleteEmployees() {
     let successCount = 0;
 
     try {
-        const batch = db.batch();
-        idsToDelete.forEach(id => {
-            batch.delete(db.collection('employees').doc(id));
-        });
+        const { error } = await supabase
+            .from('employees')
+            .delete()
+            .in('id', idsToDelete);
 
-        await batch.commit();
+        if (error) throw error;
+
         successCount = idsToDelete.length;
 
         logAudit('حذف جماعي', 'موظفين', `${successCount} موظف`, `تم حذف مجموعة من الموظفين بشكل جماعي.`);
@@ -209,8 +263,8 @@ async function bulkDeleteEmployees() {
 function bindEmployeeSearch() {
     const input = document.getElementById('emp-search');
     const filter = document.getElementById('emp-role-filter');
-    if (input) input.addEventListener('input', applyEmployeeFilters);
-    if (filter) filter.addEventListener('change', applyEmployeeFilters);
+    if (input) input.oninput = applyEmployeeFilters;
+    if (filter) filter.onchange = applyEmployeeFilters;
 }
 
 function applyEmployeeFilters() {
@@ -261,10 +315,16 @@ function openEmpModal(id = null) {
         document.getElementById('emp-role').value = emp.role;
         document.getElementById('emp-salary').value = emp.base_salary.toLocaleString('en-US');
         document.getElementById('emp-phone').value = emp.phone || '';
+        document.getElementById('emp-nationality').value = emp.nationality || '';
+        document.getElementById('emp-governorate').value = emp.governorate || '';
     } else {
         titleEl.textContent = 'إضافة موظف جديد';
+        document.getElementById('emp-nationality').value = '';
+        document.getElementById('emp-governorate').value = '';
     }
 
+    populateNationalitiesDatalist();
+    toggleEmpGovernorateField();
     attachCurrencyInput(document.getElementById('emp-salary'));
     modal.classList.add('show');
 }
@@ -297,16 +357,20 @@ async function saveEmployee() {
         return;
     }
 
-    const data = { name, role, base_salary, phone };
+    const nationality = document.getElementById('emp-nationality').value;
+    const governorate = (nationality === 'عراقي') ? document.getElementById('emp-governorate').value.trim() : '';
+
+    const data = { name, role, base_salary, phone, nationality, governorate };
 
     try {
         if (_editEmpId) {
-            db.collection('employees').doc(_editEmpId).update(data);
+            const { error } = await supabase.from('employees').update(data).eq('id', _editEmpId);
+            if (error) throw error;
             showToast('تم تحديث بيانات الموظف بنجاح.');
             logAudit('تعديل', 'موظف', name, `الدور: ${role} | الراتب: ${base_salary}`);
         } else {
-            data.created_at = firebase.firestore.FieldValue.serverTimestamp();
-            db.collection('employees').add(data);
+            const { error } = await supabase.from('employees').insert([data]);
+            if (error) throw error;
             showToast('تم إضافة الموظف بنجاح.');
             logAudit('إضافة', 'موظف', name, `الدور: ${role} | الراتب: ${base_salary}`);
         }
@@ -330,11 +394,13 @@ async function deleteEmployee(id) {
     const emp = _employees.find(e => e.id === id);
 
     try {
-        await db.collection('employees').doc(id).delete();
+        const { error } = await supabase.from('employees').delete().eq('id', id);
+        if (error) throw error;
         logAudit('حذف', 'موظف', emp?.name || id, `الدور: ${emp?.role || '—'}`);
         invalidateCache('employees');
         showToast('تم حذف الموظف بنجاح.');
     } catch (err) {
+        console.error('[employees] delete error:', err);
         showToast('فشل حذف الموظف.', 'error');
     }
 }
@@ -351,3 +417,23 @@ function getRoleBadgeClass(role) {
     if (role.includes('كاشير') || role.includes('حسابات')) return 'badge-green';
     return 'badge-gray';
 }
+
+function toggleEmpGovernorateField() {
+    const nat = document.getElementById('emp-nationality').value.trim();
+    const govGroup = document.getElementById('emp-gov-group');
+    if (govGroup) {
+        govGroup.style.display = (nat === 'عراقي') ? 'block' : 'none';
+    }
+}
+
+function populateNationalitiesDatalist() {
+    const listEl = document.getElementById('emp-nationalities-list');
+    if (!listEl) return;
+    
+    const defaults = ['عراقي', 'مصري', 'بنغلاديشي', 'باكستاني'];
+    const existing = _employees.map(e => (e.nationality || '').trim()).filter(Boolean);
+    const combined = [...new Set([...defaults, ...existing])].sort();
+    
+    listEl.innerHTML = combined.map(name => `<option value="${escHtml(name)}"></option>`).join('');
+}
+

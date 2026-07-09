@@ -8,17 +8,19 @@ const SESSION_KEY = 'payroll_session';
 async function login(username, password) {
     try {
         const hash = await hashPassword(password.trim());
-        const snap = await db.collection('users')
-            .where('username', '==', username.trim())
-            .limit(1)
-            .get();
+        const { data: users, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('username', username.trim())
+            .limit(1);
 
-        if (snap.empty) {
+        if (error) throw error;
+
+        if (!users || users.length === 0) {
             return { success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' };
         }
 
-        const doc = snap.docs[0];
-        const user = { id: doc.id, ...doc.data() };
+        const user = users[0];
 
         if (user.password_hash !== hash) {
             return { success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' };
@@ -36,7 +38,13 @@ async function login(username, password) {
         return { success: true, user: session };
     } catch (err) {
         console.error('[auth] login error:', err);
-        return { success: false, error: 'خطأ في الاتصال. يرجى التحقق من إعدادات Firebase.' };
+        let errorMsg = 'خطأ في الاتصال بقاعدة البيانات.';
+        if (err.message && err.message.includes('permission-denied')) {
+            errorMsg = 'تم رفض الوصول (Supabase RLS). يرجى التأكد من إعدادات القواعد.';
+        } else if (err.message) {
+            errorMsg = err.message;
+        }
+        return { success: false, error: errorMsg };
     }
 }
 
@@ -64,6 +72,7 @@ function hasRole(roles) {
 
 function isAdmin() { return hasRole(['admin']); }
 function canWrite() { return hasRole(['admin', 'manager']); }
+function isSupervisor() { return hasRole(['مراقب']); }
 
 /**
  * Check if current user can delete records
@@ -101,7 +110,7 @@ function renderUserCard() {
     const user = getCurrentUser();
     if (!user) return;
 
-    const roleLabels = { admin: 'مدير النظام', manager: 'مشرف', viewer: 'مشاهد' };
+    const roleLabels = { admin: 'مدير النظام', manager: 'مشرف', viewer: 'مشاهد', 'مراقب': 'مراقب الحضور' };
 
     const nameEl = document.getElementById('sidebar-username');
     const roleEl = document.getElementById('sidebar-role');
@@ -110,6 +119,27 @@ function renderUserCard() {
     if (nameEl) nameEl.textContent = user.username;
     if (roleEl) roleEl.textContent = roleLabels[user.role] || user.role;
     if (avatarEl) avatarEl.innerHTML = getUserAvatarIcon();
+
+    // ── مراقب الحضور: واجهة مخصصة تماماً، يُخفى كل شيء آخر ──
+    if (isSupervisor()) {
+        // Hide entire sidebar and main layout
+        const sidebar = document.getElementById('sidebar');
+        const mainArea = document.getElementById('main-area');
+        const supSection = document.getElementById('supervisor-section');
+
+        if (sidebar) sidebar.style.display = 'none';
+        if (mainArea) mainArea.style.display = 'none';
+        if (supSection) {
+            supSection.style.display = 'flex';
+            // Update sup header user info
+            const supUser = document.getElementById('sup-header-username');
+            const supRole = document.getElementById('sup-header-role');
+            if (supUser) supUser.textContent = user.username;
+            if (supRole) supRole.textContent = 'مراقب الحضور';
+            initSupervisor();
+        }
+        return;
+    }
 
     // -- Role-based Navigation Visibility --
     const accNav = document.getElementById('nav-accounts');

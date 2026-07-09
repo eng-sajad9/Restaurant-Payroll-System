@@ -26,9 +26,16 @@ function openPrintWindow(title, subtitle, columns, rows, totalRow, periodBanner)
         `<tr>${r.map(c => `<td>${_esc(String(c ?? '—'))}</td>`).join('')}</tr>`
     ).join('');
 
-    const totalHtml = totalRow
-        ? `<tr class="total-row">${totalRow.map(c => `<td>${_esc(String(c ?? ''))}</td>`).join('')}</tr>`
-        : '';
+    let totalHtml = '';
+    if (totalRow) {
+        if (Array.isArray(totalRow[0])) {
+            totalHtml = totalRow.map(row =>
+                `<tr class="total-row">${row.map(c => `<td>${_esc(String(c ?? ''))}</td>`).join('')}</tr>`
+            ).join('');
+        } else {
+            totalHtml = `<tr class="total-row">${totalRow.map(c => `<td>${_esc(String(c ?? ''))}</td>`).join('')}</tr>`;
+        }
+    }
 
     const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -176,39 +183,75 @@ function exportSalaries(format) {
     if (!sals.length) { showToast('لا توجد سجلات رواتب للتصدير.', 'warning'); return; }
 
     const empMap = Object.fromEntries(emps.map(e => [e.id, e]));
-    const headers = ['#', 'الموظف', 'الوظيفة', 'الراتب الأساسي (د.ع)', 'المكافأة (د.ع)', 'الخصم (د.ع)', 'الراتب النهائي (د.ع)', 'الملاحظات'];
+    const headers = ['#', 'الموظف', 'الوظيفة', 'الراتب الأساسي (د.ع)', 'المكافأة (د.ع)', 'الخصم (د.ع)', 'الراتب النهائي (د.ع)', 'حالة الصرف', 'الملاحظات'];
 
-    let totalFinal = 0;
+    let totalPaidFinal = 0;
+    let totalUnpaidFinal = 0;
 
     if (format === 'excel') {
         const rows = sals.map((s, i) => {
             const emp = empMap[s.employee_id];
             const empName = emp ? emp.name : (s.employee_name ? s.employee_name + ' (محذوف)' : s.employee_id || '—');
-            totalFinal += s.final_salary || 0;
-            return [i + 1, empName, emp?.role || '—',
-            emp?.base_salary || 0, s.bonus || 0,
-            s.deduction || 0, s.final_salary || 0, s.deduction_note || ''];
+            const status = s.status || 'draft';
+            const isPaid = status === 'paid';
+            const statusLabel = isPaid ? 'تم الصرف (كاش)' : 'معلق (مسودة)';
+
+            if (isPaid) {
+                totalPaidFinal += s.final_salary || 0;
+            } else {
+                totalUnpaidFinal += s.final_salary || 0;
+            }
+
+            return [
+                i + 1,
+                empName,
+                emp?.role || '—',
+                emp?.base_salary || 0,
+                s.bonus || 0,
+                s.deduction || 0,
+                s.final_salary || 0,
+                statusLabel,
+                s.deduction_note || ''
+            ];
         });
-        // Add totals row at the bottom in Excel too
-        rows.push(['', '', '', '', '', 'المجموع النهائي', totalFinal, '']);
+
+        rows.push(['', '', '', '', '', 'إجمالي المدفوع فعلياً (كاش)', totalPaidFinal, '', '']);
+        rows.push(['', '', '', '', '', 'إجمالي معلق (غير مدفوع)', totalUnpaidFinal, '', '']);
         downloadExcel(headers, rows, `الرواتب_الشهرية_${month}`);
     } else {
         const rows = sals.map((s, i) => {
             const emp = empMap[s.employee_id];
             const empName = emp ? emp.name : (s.employee_name ? s.employee_name + ' (محذوف)' : s.employee_id || '—');
-            totalFinal += s.final_salary || 0;
-            return [i + 1, empName, emp?.role || '—',
-            formatCurrency(emp?.base_salary || 0),
-            formatCurrency(s.bonus || 0),
-            formatCurrency(s.deduction || 0),
-            formatCurrency(s.final_salary || 0),
-            s.deduction_note || '—'];
+            const status = s.status || 'draft';
+            const isPaid = status === 'paid';
+            const statusLabel = isPaid ? 'تم الصرف (كاش)' : 'معلق (مسودة)';
+
+            if (isPaid) {
+                totalPaidFinal += s.final_salary || 0;
+            } else {
+                totalUnpaidFinal += s.final_salary || 0;
+            }
+
+            return [
+                i + 1,
+                empName,
+                emp?.role || '—',
+                formatCurrency(emp?.base_salary || 0),
+                formatCurrency(s.bonus || 0),
+                formatCurrency(s.deduction || 0),
+                formatCurrency(s.final_salary || 0),
+                statusLabel,
+                s.deduction_note || '—'
+            ];
         });
-        const totalRow = ['', '', '', '', '', 'المجموع النهائي', formatCurrency(totalFinal), ''];
+
+        const totalRow1 = ['', '', '', '', '', 'إجمالي المدفوع فعلياً (كاش)', formatCurrency(totalPaidFinal), '', ''];
+        const totalRow2 = ['', '', '', '', '', 'إجمالي معلق (غير مدفوع)', formatCurrency(totalUnpaidFinal), '', ''];
+        
         openPrintWindow(
             'كشف الرواتب الشهرية',
             `الشهر: ${getMonthLabel(month)}  —  عدد السجلات: ${sals.length}`,
-            headers, rows, totalRow
+            headers, rows, [totalRow1, totalRow2]
         );
     }
 }

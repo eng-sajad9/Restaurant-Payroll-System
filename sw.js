@@ -1,11 +1,13 @@
 // ─── Service Worker: Cache-First + Stale-While-Revalidate ─────────────────────
-const CACHE_NAME = 'payroll-system-v22';
+const CACHE_NAME = 'payroll-system-v48';
 
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
     '/css/styles.css',
-    '/js/firebase-config.js',
+    '/js/services/db-service.js',
+    '/js/supabase-config.js',
+    '/js/services/sync-service.js',
     '/js/utils.js',
     '/js/auth.js',
     '/js/dashboard.js',
@@ -17,8 +19,9 @@ const ASSETS_TO_CACHE = [
     '/js/audit.js',
     '/js/export.js',
     '/js/usage-monitor.js',
-    'https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js',
-    'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js',
+    '/js/supervisor.js',
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+    'https://cdn.jsdelivr.net/npm/dexie@3.2.4/dist/dexie.min.js',
     'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
     'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js'
 ];
@@ -60,20 +63,21 @@ function safeCachePut(cache, request, response) {
 self.addEventListener('fetch', (event) => {
     const url = event.request.url;
 
+    // Skip unsupported schemes (like chrome-extension://)
+    if (!url.startsWith('http://') && !url.startsWith('https://')) return;
+
     // Skip non-GET requests
     if (event.request.method !== 'GET') return;
 
-    // Skip Firestore API — Firebase SDK handles these with its own offline cache
-    if (url.includes('firestore.googleapis.com')) return;
-    if (url.includes('firebase.googleapis.com')) return;
-    if (url.includes('identitytoolkit.googleapis.com')) return;
+    // Skip Supabase API — SDK handles these with its own caching/networking
+    if (url.includes('supabase.co')) return;
 
     // External CDN libraries → Cache-first (URLs are versioned, never change)
     const isExternalLib = url.includes('gstatic.com') ||
-                          url.includes('jsdelivr.net') ||
-                          url.includes('sheetjs.com') ||
-                          url.includes('fonts.googleapis.com') ||
-                          url.includes('fonts.gstatic.com');
+        url.includes('jsdelivr.net') ||
+        url.includes('sheetjs.com') ||
+        url.includes('fonts.googleapis.com') ||
+        url.includes('fonts.gstatic.com');
 
     if (isExternalLib) {
         event.respondWith(

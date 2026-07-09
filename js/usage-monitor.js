@@ -1,6 +1,6 @@
 /**
  * usage-monitor.js
- * Tracks estimated Firebase Reads/Writes and total document count.
+ * Tracks estimated Supabase Reads/Writes and total document count.
  */
 
 window.usageStats = {
@@ -30,7 +30,12 @@ function resetUsageStats() {
     updateUsageUI();
 }
 
-// Intercept Firestore operations
+window.updateUsageStats = function(reads = 0, writes = 0) {
+    window.usageStats.reads += reads;
+    window.usageStats.writes += writes;
+    updateUsageUI();
+};
+
 function initUsageTracker() {
     if (window._trackerInitialized) return;
 
@@ -44,69 +49,6 @@ function initUsageTracker() {
         updateUsageUI();
     }
 
-    const originalCollection = db.collection;
-    db.collection = function (path) {
-        const colRef = originalCollection.apply(this, arguments);
-
-        // Intercept .get()
-        const originalGet = colRef.get;
-        colRef.get = async function () {
-            const snap = await originalGet.apply(this, arguments);
-            window.usageStats.reads += snap.docs.length || 1; // Count each doc read
-            updateUsageUI();
-            return snap;
-        };
-
-        // Intercept .onSnapshot()
-        const originalSnapshot = colRef.onSnapshot;
-        colRef.onSnapshot = function (onNext, onError) {
-            return originalSnapshot.call(this, (snap) => {
-                window.usageStats.reads += snap.docs.length || 1;
-                updateUsageUI();
-                onNext(snap);
-            }, onError);
-        };
-
-        // Intercept doc operations (add, set, update, delete)
-        const originalDoc = colRef.doc;
-        colRef.doc = function (id) {
-            const docRef = originalDoc.apply(this, arguments);
-
-            const originalSet = docRef.set;
-            docRef.set = async function () {
-                window.usageStats.writes += 1;
-                updateUsageUI();
-                return originalSet.apply(this, arguments);
-            };
-
-            const originalUpdate = docRef.update;
-            docRef.update = async function () {
-                window.usageStats.writes += 1;
-                updateUsageUI();
-                return originalUpdate.apply(this, arguments);
-            };
-
-            const originalDelete = docRef.delete;
-            docRef.delete = async function () {
-                window.usageStats.writes += 1;
-                updateUsageUI();
-                return originalDelete.apply(this, arguments);
-            };
-
-            return docRef;
-        };
-
-        // For collection.add()
-        const originalAdd = colRef.add;
-        colRef.add = async function () {
-            window.usageStats.writes += 1;
-            updateUsageUI();
-            return originalAdd.apply(this, arguments);
-        };
-
-        return colRef;
-    };
-
     // Initial count for "Total Storage Estimate"
     fetchTotalDocCount();
     window._trackerInitialized = true;
@@ -114,11 +56,13 @@ function initUsageTracker() {
 
 async function fetchTotalDocCount() {
     try {
-        const collections = ['employees', 'salaries', 'drivers', 'advances', 'audit_logs'];
+        const collections = ['employees', 'salaries', 'drivers', 'audit_logs'];
         let total = 0;
         for (const col of collections) {
-            const snap = await db.collection(col).get();
-            total += snap.docs.length;
+            const { count, error } = await supabase.from(col).select('*', { count: 'exact', head: true });
+            if (!error && count) {
+                total += count;
+            }
         }
         window.usageStats.totalDocs = total;
         updateUsageUI();
@@ -129,5 +73,5 @@ async function fetchTotalDocCount() {
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(initUsageTracker, 1000); // Wait for firebase-config
+    setTimeout(initUsageTracker, 1000); // Wait for supabase config
 });

@@ -26,21 +26,21 @@ async function initDrivers() {
     const mSel = document.getElementById('drv-month');
     if (mSel) {
         mSel.innerHTML = buildMonthOptions(_drvMonth);
-        mSel.addEventListener('change', () => {
+        mSel.onchange = () => {
             _drvMonth = mSel.value;
             loadDriverPage(_drvMonth, _drvPeriod);
-        });
+        };
     }
 
     // Period selector
     const pSel = document.getElementById('drv-period');
     if (pSel) {
         pSel.value = _drvPeriod;
-        pSel.addEventListener('change', () => {
+        pSel.onchange = () => {
             _drvPeriod = pSel.value;
             _updatePeriodColors();
             loadDriverPage(_drvMonth, _drvPeriod);
-        });
+        };
     }
 
     // Load from the dedicated `drivers` collection
@@ -84,19 +84,38 @@ function _updatePeriodColors() {
 
 let _drvListUnsub = null;
 
-/** Reload the list of registered drivers from Firestore `drivers` collection using real-time listener */
+/** Reload the list of registered drivers from Supabase */
 async function _reloadDriverList() {
-    if (_drvListUnsub) _drvListUnsub();
-    _drvListUnsub = db.collection('drivers')
-        .orderBy('created_at', 'desc')
-        .onSnapshot(snap => {
-            _driverEmps = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            populateDrvDropdown();
-            // Trigger a page reload if we are on the drivers page to refresh data links
-            if (document.getElementById('page-drivers').classList.contains('active')) {
-                loadDriverPage(_drvMonth, _drvPeriod);
-            }
-        }, err => console.error('[drivers] list listener error:', err));
+    if (_drvListUnsub) { supabase.removeChannel(_drvListUnsub); _drvListUnsub = null; }
+    
+    try {
+        const { data, error } = await supabase
+            .from('drivers')
+            .select('*')
+            .order('created_at', { ascending: false });
+            
+        if (error) throw error;
+        _driverEmps = data || [];
+        populateDrvDropdown();
+        if (document.getElementById('page-drivers').classList.contains('active')) {
+            loadDriverPage(_drvMonth, _drvPeriod);
+        }
+
+        _drvListUnsub = supabase
+            .channel('public:drivers')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, async () => {
+                const { data } = await supabase.from('drivers').select('*').order('created_at', { ascending: false });
+                _driverEmps = data || [];
+                populateDrvDropdown();
+                if (document.getElementById('page-drivers').classList.contains('active')) {
+                    loadDriverPage(_drvMonth, _drvPeriod);
+                }
+            })
+            .subscribe();
+
+    } catch (err) {
+        console.error('[drivers] list listener error:', err);
+    }
 }
 
 function populateDrvDropdown() {
@@ -135,28 +154,44 @@ async function loadDriverPage(month, period) {
         return;
     }
 
-    // Since 'in' queries have limits and snap listeners are better broad, 
-    // we listen to all salary records for the month and filter locally for speed and reactivity.
-    _drvPageUnsub = db.collection('salaries')
-        .where('month', '==', month)
-        .onSnapshot(snap => {
-            const allRecords = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            // Filter to include ALL records with a pay_period (indicating they are driver records)
-            // even if the driver has been deleted from the active list.
-            const driverRelated = allRecords.filter(r => !!r.pay_period);
+    if (_drvPageUnsub) { supabase.removeChannel(_drvPageUnsub); _drvPageUnsub = null; }
 
-            _driverRecords = driverRelated.filter(r => {
-                if (period === 'full') return !r.pay_period || r.pay_period === 'full';
-                return r.pay_period === period;
-            });
+    try {
+        const { data: allRecords, error } = await supabase
+            .from('salaries')
+            .select('*')
+            .eq('month', month);
 
-            // Re-apply filters whenever data changes to keep _filteredDriverEmps in sync
-            filterDrivers();
-            renderDriverTable(_driverEmps, _driverRecords);
-        }, err => {
-            console.error('[drivers] page listener error:', err);
-            showToast('فشل المزامنة اللحظية لسجلات السائقين.', 'error');
+        if (error) throw error;
+
+        const driverRelated = (allRecords || []).filter(r => !!r.pay_period);
+
+        _driverRecords = driverRelated.filter(r => {
+            if (period === 'full') return !r.pay_period || r.pay_period === 'full';
+            return r.pay_period === period;
         });
+
+        filterDrivers();
+        renderDriverTable(_driverEmps, _driverRecords);
+
+        _drvPageUnsub = supabase
+            .channel('public:salaries_drv')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'salaries', filter: `month=eq.${month}` }, async () => {
+                const { data } = await supabase.from('salaries').select('*').eq('month', month);
+                const related = (data || []).filter(r => !!r.pay_period);
+                _driverRecords = related.filter(r => {
+                    if (period === 'full') return !r.pay_period || r.pay_period === 'full';
+                    return r.pay_period === period;
+                });
+                filterDrivers();
+                renderDriverTable(_driverEmps, _driverRecords);
+            })
+            .subscribe();
+
+    } catch (err) {
+        console.error('[drivers] page listener error:', err);
+        showToast('فشل المزامنة اللحظية لسجلات السائقين.', 'error');
+    }
 }
 
 function chunkArray(arr, size) {
@@ -218,14 +253,15 @@ function renderDriverTable(drivers, records) {
           <td>
             <div class="tbl-actions">
               ${canWrite() ? `
-              <button class="act-btn edit" title="${rec ? 'تعديل' : 'إضافة'} سجل"
+              <button class="act-btn view" title="${rec ? 'تعديل سجل الراتب' : 'تصفية وصرف راتب السائق'}"
                 onclick="openDrvModal('${drv.id}', '${rec ? rec.id : ''}')">
-                <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                ${rec ? 'تعديل الراتب' : 'تصفية وصرف'}
               </button>
-              ${(rec && canDelete()) ? `<button class="act-btn delete" title="حذف" onclick="deleteDrvRecord('${rec.id}')">
+              ${(rec && canDelete()) ? `<button class="act-btn delete" title="حذف سجل الراتب" onclick="deleteDrvRecord('${rec.id}')">
                 <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
               </button>` : ''}
-              ${(!drv.isDeleted && canDelete()) ? `<button class="act-btn delete" title="حذف السائق نهائياً" style="opacity:0.6;" onclick="deleteDriverProfile('${drv.id}', '${escHtml(drvName)}')">
+              ${(!drv.isDeleted && canDelete()) ? `<button class="act-btn delete" title="حذف السائق نهائياً من النظام" onclick="deleteDriverProfile('${drv.id}', '${escHtml(drvName)}')">
                 <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
               </button>` : ''}
 ` : ''}
@@ -414,25 +450,30 @@ async function saveDrvRecord() {
 
     try {
         if (_editDrvId) {
-            await db.collection('salaries').doc(_editDrvId).update(data);
+            const { error } = await supabase.from('salaries').update(data).eq('id', _editDrvId);
+            if (error) throw error;
             invalidateCache('salaries');
             showToast('تم تحديث سجل الدليفري بنجاح.');
             logAudit('تعديل', 'دليفري', emp?.name || empId, `الشهر: ${getMonthLabel(_drvMonth)} | طلبات: ${orders} | السعر: ${price} | وردية: ${data.shift_type}`);
         } else {
-            // Duplicate check: same driver + month + period
-            const dup = await db.collection('salaries')
-                .where('employee_id', '==', empId)
-                .where('month', '==', _drvMonth)
-                .where('pay_period', '==', _drvPeriod)
-                .limit(1).get();
+            const { data: dup, error: dupErr } = await supabase
+                .from('salaries')
+                .select('id')
+                .eq('employee_id', empId)
+                .eq('month', _drvMonth)
+                .eq('pay_period', _drvPeriod)
+                .limit(1);
 
-            if (!dup.empty) {
+            if (dupErr) throw dupErr;
+
+            if (dup && dup.length > 0) {
                 showToast(`يوجد سجل لهذا السائق في ${PERIOD_LABELS[_drvPeriod]} لهذا الشهر مسبقاً.`, 'warning');
                 saveBtn.disabled = false;
                 return;
             }
-            data.created_at = firebase.firestore.FieldValue.serverTimestamp();
-            await db.collection('salaries').add(data);
+            
+            const { error } = await supabase.from('salaries').insert([data]);
+            if (error) throw error;
             invalidateCache('salaries');
             showToast('تم إضافة سجل الدليفري بنجاح.');
             logAudit('إضافة', 'دليفري', emp?.name || empId, `الشهر: ${getMonthLabel(_drvMonth)} | طلبات: ${orders} | السعر: ${price} | وردية: ${data.shift_type}`);
@@ -456,7 +497,8 @@ async function deleteDrvRecord(id) {
     const ok = await showConfirm('هل تريد حذف سجل الدفع هذا نهائياً؟', 'حذف السجل');
     if (!ok) return;
     try {
-        await db.collection('salaries').doc(id).delete();
+        const { error } = await supabase.from('salaries').delete().eq('id', id);
+        if (error) throw error;
         invalidateCache('salaries');
         const rec = _driverRecords.find(r => r.id === id);
         const drv = _driverEmps.find(e => e.id === rec?.employee_id);
@@ -476,7 +518,8 @@ async function deleteDriverProfile(driverId, driverName) {
     );
     if (!ok) return;
     try {
-        await db.collection('drivers').doc(driverId).delete();
+        const { error } = await supabase.from('drivers').delete().eq('id', driverId);
+        if (error) throw error;
         invalidateCache('drivers');
         logAudit('حذف', 'سائق دليفري', driverName, `تم حذف الملف الشخصي للسائق`);
         showToast(`تم حذف السائق "${driverName}" بنجاح.`);
@@ -515,12 +558,12 @@ async function saveNewDriver() {
     saveBtn.disabled = true;
 
     try {
-        db.collection('drivers').add({
+        const { error } = await supabase.from('drivers').insert([{
             name,
             base_salary: salary,
-            default_shift: defaultShift,
-            created_at: firebase.firestore.FieldValue.serverTimestamp(),
-        });
+            default_shift: defaultShift
+        }]);
+        if (error) throw error;
 
         invalidateCache('drivers');
         logAudit('إضافة', 'سائق دليفري', name, `الراتب الأساسي: ${salary} | الوردية: ${defaultShift}`);
@@ -574,7 +617,8 @@ async function updateDriverProfile(driverId) {
     saveBtn.disabled = true;
 
     try {
-        db.collection('drivers').doc(driverId).update({ name, base_salary: salary, default_shift: defaultShift });
+        const { error } = await supabase.from('drivers').update({ name, base_salary: salary, default_shift: defaultShift }).eq('id', driverId);
+        if (error) throw error;
         invalidateCache('drivers');
         logAudit('تعديل', 'سائق دليفري', name, `تحديث بيانات: الراتب=${salary}، الوردية=${defaultShift}`);
         showToast(`تم تحديث بيانات السائق "${name}".`);

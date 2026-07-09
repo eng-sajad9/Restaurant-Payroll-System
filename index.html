@@ -16,15 +16,19 @@
 
   <link rel="stylesheet" href="css/styles.css" />
 
-  <!-- Firebase v9 Compat SDK -->
-  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <!-- Dexie.js for IndexedDB -->
+  <script src="https://cdn.jsdelivr.net/npm/dexie@3.2.4/dist/dexie.min.js"></script>
 
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
+  <!-- Supabase JS Client Library -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <!-- App JS modules -->
-  <script src="js/firebase-config.js"></script>
+  <script src="js/services/db-service.js"></script>
+  <script src="js/supabase-config.js"></script>
+  <script src="js/services/sync-service.js"></script>
   <script src="js/utils.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/dashboard.js"></script>
@@ -127,6 +131,47 @@
      قسم التطبيق (يظهر بعد تسجيل الدخول)
 ══════════════════════════════════════════════════════════════════ -->
   <section id="app-section" style="display:none;">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       قسم مراقب الحضور — يظهر فقط لدور مراقب الحضور
+  ═══════════════════════════════════════════════════════════════ -->
+  <section id="supervisor-section" style="display:none; flex-direction:column; min-height:100dvh; background:var(--c-bg);">
+
+    <!-- رأس الصفحة -->
+    <header class="sup-header">
+      <div class="sup-header-brand">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>متابعة الموظفين</span>
+      </div>
+      <div class="sup-header-user">
+        <div class="sup-header-info">
+          <span id="sup-header-username" class="sup-header-name">—</span>
+          <span id="sup-header-role" class="sup-header-role">مراقب الحضور</span>
+        </div>
+        <button class="sup-logout-btn" onclick="logout()" title="تسجيل الخروج">
+          <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- شريط الأدوات: البحث + فلتر الوظيفة + الشهر -->
+    <div class="sup-toolbar">
+      <div class="sup-search-wrap">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="sup-search" type="search" placeholder="بحث بالاسم..." oninput="filterSupEmployees()">
+      </div>
+      <select id="sup-role-filter" class="sup-month-sel" onchange="filterSupEmployees()">
+        <option value="">الكل</option>
+      </select>
+      <select id="sup-month-sel" class="sup-month-sel"></select>
+    </div>
+
+    <!-- شبكة بطاقات الموظفين -->
+    <div id="sup-emp-grid" class="sup-emp-grid">
+      <div class="sup-loading"><span class="spinner"></span> جاري التحميل...</div>
+    </div>
+
+  </section>
 
     <!-- ══ الشريط الجانبي ════════════════════════════════════ -->
     <aside id="sidebar">
@@ -308,9 +353,13 @@
           <div class="breadcrumb-sub" id="breadcrumb-sub"></div>
         </div>
         <div class="header-right">
-          <div id="connectivity-status" class="connectivity-online">
-            <span class="dot"></span>
-            <span class="status-text">متصل</span>
+          <!-- Premium Sync Status Indicator -->
+          <div id="sync-indicator" class="sync-indicator-container state-synced" title="حالة مزامنة الجسر السحابي">
+            <svg class="sync-spinner" viewBox="0 0 50 50" aria-hidden="true">
+              <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+            </svg>
+            <span class="sync-dot"></span>
+            <span class="sync-text">متصل (جاهز)</span>
           </div>
           <span id="header-role-badge"></span>
         </div>
@@ -418,6 +467,28 @@
               </div>
             </div>
 
+            <!-- آخر خصومات وملاحظات المراقبين -->
+            <div class="card" id="dash-supervisor-deductions-card" style="border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.03); background: var(--c-surface);">
+              <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <span class="card-title" style="font-size: 15px; color: var(--c-primary); display:flex; align-items:center; gap:8px;">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--c-warning); flex-shrink:0;">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  خصومات وملاحظات المراقبين لطلب المتابعة
+                </span>
+                <span class="badge badge-red" id="dash-deductions-count">0 سجل</span>
+              </div>
+              <div class="card-body" style="padding: 0 16px 16px;">
+                <div id="dash-deductions-list" class="dash-deductions-list">
+                  <div style="text-align:center;padding:24px;color:var(--c-text-2);">
+                    <span class="spinner"></span> جاري التحميل...
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- توزيع الوظائف -->
             <div class="card"
               style="border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.03); background: linear-gradient(180deg, var(--c-surface) 0%, var(--c-bg) 100%);">
@@ -509,6 +580,7 @@
                     </th>
                     <th style="width:50px;">#</th>
                     <th>الاسم</th>
+                    <th>الجنسية / البلد</th>
                     <th>الراتب الأساسي</th>
                     <th>الوظيفة</th>
                     <th>الهاتف</th>
@@ -517,7 +589,7 @@
                 </thead>
                 <tbody id="emp-tbody">
                   <tr>
-                    <td colspan="6" class="loading-cell"><span class="spinner"></span></td>
+                    <td colspan="7" class="loading-cell"><span class="spinner"></span></td>
                   </tr>
                 </tbody>
               </table>
@@ -558,12 +630,12 @@
                   طباعة PDF
                 </button>
               </div>
-              <button class="btn btn-primary" onclick="openSalModal()" data-write-only>
+              <button class="btn btn-primary" onclick="generateMonthlyPayroll()" data-write-only style="box-shadow: var(--sh-glow);">
                 <svg viewBox="0 0 24 24">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                  <path d="m9 12 2 2 4-4"/>
                 </svg>
-                إضافة سجل
+                توليد رواتب الشهر
               </button>
             </div>
           </div>
@@ -592,10 +664,12 @@
                   <tr>
                     <th style="width:50px;">#</th>
                     <th>الموظف</th>
+                    <th>الوظيفة</th>
                     <th>الراتب الأساسي</th>
                     <th>المكافأة</th>
                     <th>الخصم</th>
                     <th>الراتب النهائي</th>
+                    <th>الحالة</th>
                     <th>الإجراءات</th>
                   </tr>
                 </thead>
@@ -1005,6 +1079,19 @@
             <label for="emp-phone">رقم الهاتف</label>
             <input id="emp-phone" type="tel" class="form-control" placeholder="مثال: 07701234567" />
           </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="emp-nationality">الجنسية / البلد (اختياري)</label>
+              <input id="emp-nationality" list="emp-nationalities-list" class="form-control" placeholder="اكتب أو اختر الجنسية (مثال: عراقي، سوري...)" oninput="toggleEmpGovernorateField()" autocomplete="off" />
+              <datalist id="emp-nationalities-list">
+                <!-- Dynamically populated options -->
+              </datalist>
+            </div>
+            <div class="form-group" id="emp-gov-group" style="display:none;">
+              <label for="emp-governorate">المحافظة (إذا كانت عراقية)</label>
+              <input id="emp-governorate" type="text" class="form-control" placeholder="مثال: بغداد، البصرة..." />
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeEmpModal()">إلغاء</button>
@@ -1020,7 +1107,7 @@
   <div id="sal-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="sal-modal-title">
     <div class="modal">
       <div class="modal-header">
-        <h3 id="sal-modal-title">إضافة سجل راتب</h3>
+        <h3 id="sal-modal-title">تعديل سجل الراتب</h3>
         <button class="modal-close" onclick="closeSalModal()" aria-label="إغلاق">
           <svg viewBox="0 0 24 24">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -1028,20 +1115,13 @@
           </svg>
         </button>
       </div>
-      <form id="sal-form" onsubmit="event.preventDefault(); saveSalary();" novalidate>
+      <form id="sal-form" onsubmit="event.preventDefault(); saveSalaryAndPay();" novalidate>
         <div class="modal-body">
-          <!-- Searchable employee picker -->
+          <!-- Readonly employee name display -->
           <div class="form-group">
-            <label for="sal-emp-search">الموظف <span class="req">*</span></label>
-            <div class="emp-picker-wrap">
-              <input id="sal-emp-search" type="text" class="form-control" placeholder="ابحث باسم الموظف أو الوظيفة..."
-                autocomplete="off" oninput="filterSalEmployees()" onfocus="filterSalEmployees()"
-                onblur="closeSalEmployeePicker()" />
-              <!-- Hidden input carries the actual selected ID -->
-              <input type="hidden" id="sal-emp-hidden" />
-              <!-- Dropdown results list -->
-              <div id="sal-emp-list" class="emp-picker-list"></div>
-            </div>
+            <label>الموظف</label>
+            <div id="sal-emp-name-display" style="font-weight: 700; font-size: 15px; color: var(--c-accent); padding: 10px 14px; background: var(--c-bg); border-radius: var(--r-sm); border: 1px solid var(--c-border);"></div>
+            <input type="hidden" id="sal-emp-hidden" />
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -1059,6 +1139,17 @@
             <label for="sal-deduction-note">سبب الخصم (اختياري)</label>
             <input id="sal-deduction-note" type="text" class="form-control"
               placeholder="مثال: غيابات بدون إذن، تأخير عن العمل..." />
+          </div>
+
+          <!-- سجل خصومات وملاحظات المراقب -->
+          <div id="sal-supervisor-history-box" class="absence-calc-box" style="margin-top: 14px; background: #fff5f5; border-color: #feb2b2; display: none;">
+            <div class="calc-title" style="color: #c53030; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              سجل خصومات وملاحظات المراقبين
+            </div>
+            <div id="sal-supervisor-history-list" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;"></div>
           </div>
 
           <!-- حاسبة خصم الغياب -->
@@ -1099,9 +1190,10 @@
             <div class="form-hint">المعادلة: الراتب الأساسي + المكافأة − الخصم</div>
           </div>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" onclick="closeSalModal()">إلغاء</button>
-          <button type="submit" class="btn btn-primary" id="sal-save-btn">حفظ السجل</button>
+        <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end; width: 100%;">
+          <button type="button" class="btn btn-secondary" onclick="closeSalModal()" style="margin-left: auto;">إلغاء</button>
+          <button type="button" class="btn btn-secondary" id="sal-draft-btn" onclick="saveSalaryDraft()" style="color: var(--c-accent); border-color: hsla(var(--h-accent), 85%, 45%, 0.2); background-color: var(--c-accent-soft); font-weight: 600;">حفظ كمسودة</button>
+          <button type="submit" class="btn btn-primary" id="sal-save-btn" style="background: var(--c-success); border-color: var(--c-success); box-shadow: 0 4px 10px rgba(5, 150, 105, 0.2); font-weight: 600;">تأكيد وصرف الراتب</button>
         </div>
       </form>
     </div>
@@ -1263,6 +1355,7 @@
               <option value="admin">مدير النظام (صلاحيات كاملة)</option>
               <option value="manager">مدير (صلاحيات مخصصة)</option>
               <option value="viewer">مشاهد (قراءة فقط)</option>
+              <option value="مراقب">مراقب الحضور (خصومات ومتابعة)</option>
             </select>
           </div>
 
@@ -1462,6 +1555,108 @@
 
 
 
+  <!-- ═══════════════════════════════════════════════════════════════
+     نافذة: وصل استلام الراتب
+  ═══════════════════════════════════════════════════════════════ -->
+  <div id="receipt-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="receipt-modal-title">
+    <div class="modal" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 id="receipt-modal-title">وصل استلام الراتب</h3>
+        <button class="modal-close" onclick="closeReceiptModal()" aria-label="إغلاق">
+          <svg viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 16px;">
+        <div id="voucher-preview-content">
+          <!-- Content injected dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeReceiptModal()">إغلاق</button>
+        <button type="button" class="btn btn-primary" onclick="triggerSlipPrint()" style="background: var(--c-primary); border-color: var(--c-primary);">
+          <svg viewBox="0 0 24 24">
+            <polyline points="6 9 6 2 18 2 18 9" />
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+            <rect x="6" y="14" width="12" height="8" />
+          </svg>
+          طباعة الوصل
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- طباعة الوصل (تظهر فقط عند الطباعة) -->
+  <div id="salary-slip-print-area"></div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       نافذة: إضافة خصم / ملاحظة (مراقب الحضور)
+  ═══════════════════════════════════════════════════════════════ -->
+  <div id="sup-modal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal sup-modal-inner">
+
+      <div class="modal-header sup-modal-header">
+        <div>
+          <h3 id="sup-modal-emp-name" style="margin:0;font-size:17px;"></h3>
+          <div id="sup-modal-emp-role" style="font-size:12px;color:var(--c-text-2);margin-top:2px;"></div>
+        </div>
+        <button class="modal-close" onclick="closeSupModal()" aria-label="إغلاق">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-body" style="padding:0;overflow-y:auto;max-height:80dvh;">
+
+        <!-- نموذج الإضافة -->
+        <form id="sup-deduction-form" onsubmit="event.preventDefault(); saveSupDeduction();" class="sup-form">
+          <div class="sup-form-section">
+            <div class="sup-form-label">مبلغ الخصم (اختياري)</div>
+            <div class="sup-amount-wrap">
+              <input id="sup-amount" type="text" inputmode="numeric" class="sup-amount-input" placeholder="0" autocomplete="off">
+              <span class="sup-amount-unit">د.ع</span>
+            </div>
+          </div>
+
+          <div class="sup-form-section">
+            <div class="sup-form-label">ملاحظة (اختياري)</div>
+            <textarea id="sup-note" class="sup-note-input" rows="3" placeholder="مثال: غياب بدون إذن، تأخر ساعة..."></textarea>
+          </div>
+
+          <div class="sup-form-section">
+            <div class="sup-form-label">صورة توضيحية (اختياري)</div>
+            <label class="sup-img-upload-btn" for="sup-img-input">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              <span id="sup-img-label">اختر صورة (اختياري)</span>
+            </label>
+            <input type="file" id="sup-img-input" accept="image/*" capture="environment" style="display:none" onchange="handleSupImageUpload(this)">
+            <img id="sup-img-preview" class="sup-img-preview" src="" alt="" style="display:none;">
+          </div>
+
+          <div class="sup-form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeSupModal()">إلغاء</button>
+            <button type="submit" id="sup-save-btn" class="btn btn-primary sup-save-btn">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+              حفظ السجل
+            </button>
+          </div>
+        </form>
+
+        <!-- سجل التعديلات السابقة -->
+        <div class="sup-history-section">
+          <div class="sup-history-title">
+            <svg viewBox="0 0 24 24"><polyline points="12 8 12 12 14 14"/><path d="M3.05 11a9 9 0 1 0 .5-2.5"/><polyline points="3 3 3 11 11 11"/></svg>
+            سجل التعديلات — <span id="sup-hist-month-label"></span>
+          </div>
+          <div id="sup-history-list"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script src="js/supervisor.js"></script>
 
 </body>
 

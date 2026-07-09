@@ -11,6 +11,9 @@
  * @returns {Promise<string>} Hex-encoded hash
  */
 async function hashPassword(password) {
+    if (!window.crypto || !window.crypto.subtle) {
+        throw new Error('بيئة التشفير غير متوفرة. يرجى التأكد من تشغيل الموقع عبر localhost أو https (ليس كملف محلي).');
+    }
     const encoder = new TextEncoder();
     const data = encoder.encode(password);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -64,6 +67,7 @@ window.addEventListener('keydown', (e) => {
         if (window.closeSalModal) closeSalModal();
         if (window.closeAccModal) closeAccModal();
         if (window.closeChangePwd) closeChangePwd();
+        if (window.closeGlobalImage) closeGlobalImage();
 
         // 3. Fallback: find any element with 'modal-overlay show' and remove 'show'
         document.querySelectorAll('.modal-overlay.show, .modal.show').forEach(m => {
@@ -80,7 +84,7 @@ window.addEventListener('keydown', (e) => {
  * @param {string} [title='تأكيد الإجراء']
  * @returns {Promise<boolean>}
  */
-function showConfirm(message, title = 'تأكيد الإجراء') {
+function showConfirm(message, title = 'تأكيد الإجراء', okText = 'تأكيد', cancelText = 'إلغاء', isDanger = null) {
     return new Promise(resolve => {
         const overlay = document.getElementById('confirm-overlay');
         const titleEl = document.getElementById('confirm-title');
@@ -90,6 +94,31 @@ function showConfirm(message, title = 'تأكيد الإجراء') {
 
         titleEl.textContent = title;
         msgEl.textContent = message;
+
+        // Auto-detect danger actions if not explicitly set
+        let finalDanger = isDanger;
+        if (finalDanger === null) {
+            finalDanger = title.includes('حذف') || title.includes('إلغاء') || title.includes('مسح');
+        }
+
+        // Auto-detect button text if not explicitly set
+        let finalOkText = okText;
+        if (finalOkText === 'تأكيد') {
+            if (title.includes('حذف') || title.includes('مسح')) finalOkText = 'حذف';
+            else if (title.includes('توليد')) finalOkText = 'توليد';
+            else if (title.includes('صرف')) finalOkText = 'تأكيد وصرف';
+            else if (title.includes('قفل')) finalOkText = 'تأكيد وقفل';
+        }
+
+        okBtn.textContent = finalOkText;
+        cancelBtn.textContent = cancelText;
+
+        if (finalDanger) {
+            okBtn.className = 'btn btn-danger';
+        } else {
+            okBtn.className = 'btn btn-primary';
+        }
+
         overlay.classList.add('show');
 
         const cleanup = () => overlay.classList.remove('show');
@@ -177,9 +206,10 @@ function getRoleBadge(role) {
         delivery: 'badge badge-orange',
         cashier: 'badge badge-green',
         chef: 'badge badge-red',
+        'مراقب': 'badge badge-green',
     };
     const key = (role || '').toLowerCase();
-    return map[key] || 'badge badge-gray';
+    return map[key] || map[role] || 'badge badge-gray';
 }
 
 /**
@@ -259,16 +289,15 @@ async function logAudit(action, targetType, targetName, details = '') {
     const user = getCurrentUser();
     if (!user) return;
     try {
-        await db.collection('audit_logs').add({
+        await supabase.from('audit_logs').insert([{
             user_id: user.id,
             username: user.username,
             role: user.role,
             action,
             target_type: targetType,
             target_name: String(targetName || '—'),
-            details: String(details || ''),
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        });
+            details: String(details || '')
+        }]);
     } catch (err) {
         console.warn('[audit] log failed:', err);
     }
@@ -294,7 +323,7 @@ function getUserAvatarIcon() {
 // for the next 15 minutes, even if the page is refreshed.
 
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 دقيقة
-const LS_PREFIX    = 'arc_'; // arc = app-read-cache
+const LS_PREFIX = 'arc_'; // arc = app-read-cache
 
 window.appCache = {
     _data: {},      // Layer 1: memory
@@ -362,29 +391,19 @@ window.appCache = {
                 return lsData;
             }
 
-            // Layer 3: Firestore cache-first (IndexedDB), then network
+            // Layer 3: Network fetch
             try {
-                let snap, fromCache = true;
-                try {
-                    // جرّب الـ IndexedDB أولاً (لا قراءات شبكة)
-                    snap = await db.collection(collectionName).get({ source: 'cache' });
-                    console.log(`[Cache] ✅ Firestore IndexedDB hit: ${collectionName}`);
-                } catch {
-                    // الـ cache فارغ → اجلب من الشبكة
-                    fromCache = false;
-                    snap = await db.collection(collectionName).get({ source: 'server' });
-                    console.log(`[Cache] 🌐 Network fetch: ${collectionName} (${snap.docs.length} docs)`);
+                const { data, error } = await supabase.from(collectionName).select('*');
+                if (error) throw error;
+
+                this._data[collectionName] = data || [];
+                this._lsWrite(collectionName, data || []);
+
+                if (window.updateUsageStats) {
+                    window.updateUsageStats((data || []).length, 0);
                 }
 
-                const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                this._data[collectionName] = data;
-                this._lsWrite(collectionName, data);
-
-                if (!fromCache && window.updateUsageStats) {
-                    window.updateUsageStats(snap.docs.length, 0);
-                }
-                return data;
-
+                return data || [];
             } catch (err) {
                 console.error(`[Cache] ❌ Failed: ${collectionName}`, err);
                 return [];
@@ -503,3 +522,50 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 });
+
+// --- Global Image Viewer --------------------------------------------------
+/**
+ * Show an image in a global full-screen viewer.
+ * @param {string} src The image source
+ */
+function viewGlobalImage(src) {
+    let viewer = document.getElementById('global-image-viewer');
+    if (!viewer) {
+        viewer = document.createElement('div');
+        viewer.id = 'global-image-viewer';
+        viewer.className = 'global-image-viewer';
+        viewer.innerHTML = `<span class="iv-close">&times;</span><img id="global-image-viewer-img" src="" alt="Enlarged Image">`;
+        document.body.appendChild(viewer);
+
+        // Close on click outside or close button
+        viewer.addEventListener('click', closeGlobalImage);
+        // Prevent click on image from closing
+        viewer.querySelector('img').addEventListener('click', (e) => e.stopPropagation());
+    }
+    const img = viewer.querySelector('#global-image-viewer-img');
+    img.src = src;
+    
+    // Allow browser to render DOM before adding transition class
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            viewer.classList.add('show');
+        });
+    });
+}
+
+/**
+ * Close the global image viewer
+ */
+function closeGlobalImage() {
+    const viewer = document.getElementById('global-image-viewer');
+    if (viewer) {
+        viewer.classList.remove('show');
+        // Wait for transition to finish before hiding/clearing
+        setTimeout(() => {
+            if (!viewer.classList.contains('show')) {
+                const img = viewer.querySelector('#global-image-viewer-img');
+                if (img) img.src = '';
+            }
+        }, 300);
+    }
+}

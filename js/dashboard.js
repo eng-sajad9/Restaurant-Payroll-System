@@ -9,49 +9,128 @@ async function initDashboard() {
   const monthEl = document.getElementById('dash-month');
   if (monthEl) {
     monthEl.innerHTML = buildMonthOptions(getCurrentMonth());
-    monthEl.addEventListener('change', () => loadDashboardStats(monthEl.value));
+    monthEl.onchange = () => loadDashboardStats(monthEl.value);
   }
 
   await loadDashboardStats(getCurrentMonth());
 }
 
 async function loadDashboardStats(month) {
-  // Real-time listener for dashboard stats
-  if (window._dashUnsubStat) window._dashUnsubStat();
+  if (window._dashUnsubStat) { supabase.removeChannel(window._dashUnsubStat); window._dashUnsubStat = null; }
+  if (window._dashUnsubDeduct) { supabase.removeChannel(window._dashUnsubDeduct); window._dashUnsubDeduct = null; }
 
-  window._dashUnsubStat = db.collection('salaries')
-    .where('month', '==', month)
-    .onSnapshot(async salSnap => {
-      const salaries = salSnap.docs.map(d => d.data());
-      const totalSal = salaries.reduce((s, r) => s + (r.final_salary || 0), 0);
+  try {
+      const { data: salaries, error } = await supabase.from('salaries').select('*').eq('month', month);
+      if (error) throw error;
+      
+      const processSalaries = async (salariesData) => {
+          const totalSal = salariesData.reduce((s, r) => s + (r.final_salary || 0), 0);
+          setText('stat-salary', formatCurrency(totalSal));
+          
+          const labelEl = document.getElementById('dash-month-label');
+          if (labelEl) labelEl.textContent = getMonthLabel(month);
 
-      setText('stat-salary', formatCurrency(totalSal));
+          try {
+            const employees = await cachedGet('employees');
+            setText('stat-employees', employees.length);
+            renderRecentSalaries(salariesData, employees);
+            renderRoleBreakdown(employees);
 
-      const labelEl = document.getElementById('dash-month-label');
-      if (labelEl) labelEl.textContent = getMonthLabel(month);
+            // Load supervisor deductions
+            await loadDashboardDeductions(month);
 
-      try {
-        // Use CACHED data for employees and drivers
-        const employees = await cachedGet('employees');
-        setText('stat-employees', employees.length);
-        renderRecentSalaries(salaries, employees);
-        renderRoleBreakdown(employees);
+            const drivers = await cachedGet('drivers');
+            setText('stat-drivers', drivers.length);
+          } catch (err) {
+            console.error('[dashboard] Data fetch failed:', err);
+          }
 
-        const drivers = await cachedGet('drivers');
-        setText('stat-drivers', drivers.length);
-      } catch (err) {
-        console.error('[dashboard] Data fetch failed:', err);
-      }
+          if (window.updateUsageStats) {
+            window.updateUsageStats(salariesData.length, 0);
+          }
+      };
 
-      // Manual increment for usage monitor (since onSnapshot isn't automatically caught by our cache wrapper)
-      if (window.updateUsageStats) {
-        window.updateUsageStats(salSnap.docs.length, 0);
-      }
+      await processSalaries(salaries || []);
 
-    }, err => {
-      console.error('[dashboard] listener error:', err);
-    });
+      window._dashUnsubStat = supabase
+          .channel('public:salaries_dash')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'salaries', filter: `month=eq.${month}` }, async () => {
+              const { data } = await supabase.from('salaries').select('*').eq('month', month);
+              await processSalaries(data || []);
+          })
+          .subscribe();
+
+      window._dashUnsubDeduct = supabase
+          .channel('public:deduction_logs_dash')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'deduction_logs', filter: `month=eq.${month}` }, async () => {
+              await loadDashboardDeductions(month);
+          })
+          .subscribe();
+          
+  } catch (err) {
+      console.error('[dashboard] load error:', err);
+  }
 }
+
+async function loadDashboardDeductions(month) {
+    const listEl = document.getElementById('dash-deductions-list');
+    const countEl = document.getElementById('dash-deductions-count');
+    if (!listEl) return;
+
+    try {
+        const { data: logs, error } = await supabase
+            .from('deduction_logs')
+            .select('*')
+            .eq('month', month);
+
+        if (error) throw error;
+
+        const sortedLogs = (logs || []).sort((a, b) => new Date(b.added_at) - new Date(a.added_at));
+
+        if (countEl) {
+            countEl.textContent = `${sortedLogs.length} سجل`;
+        }
+
+        if (sortedLogs.length === 0) {
+            listEl.innerHTML = `
+              <div class="empty-state" style="padding: 24px; border: 1.5px dashed var(--c-border); border-radius:10px; width: 100%; text-align: center;">
+                <strong>لا توجد خصومات أو ملاحظات مسجلة من قبل المراقبين هذا الشهر.</strong>
+              </div>`;
+            return;
+        }
+
+        listEl.innerHTML = sortedLogs.map(log => {
+            const dt = new Date(log.added_at);
+            const dateStr = dt.toLocaleDateString('ar-SA', { day: 'numeric', month: 'short' });
+            const timeStr = dt.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+            
+            return `
+            <div class="dash-deduction-item">
+              <div class="dash-deduction-main">
+                <div class="dash-deduction-emp">${escHtml(log.employee_name || 'موظف')}</div>
+                <div class="dash-deduction-meta">
+                  <span>بواسطة: <strong class="dash-deduction-by">${escHtml(log.added_by)}</strong></span>
+                  <span>•</span>
+                  <span>${escHtml(dateStr)} - ${escHtml(timeStr)}</span>
+                </div>
+                ${log.note ? `<div class="dash-deduction-note">${escHtml(log.note)}</div>` : ''}
+              </div>
+              <div class="dash-deduction-side">
+                ${log.amount > 0 ? `<span class="dash-deduction-amt">−${formatCurrency(log.amount)}</span>` : '<span class="badge badge-gray" style="font-size:10px;">ملاحظة فقط</span>'}
+                ${log.image_data ? `
+                  <img src="${log.image_data}" class="dash-deduction-img-thumb" alt="صورة توضيحية" 
+                    onclick="viewGlobalImage(this.src)" title="اضغط لتكبير الصورة">
+                ` : ''}
+              </div>
+            </div>`;
+        }).join('');
+
+    } catch (err) {
+        console.error('[dashboard] failed to load deduction logs:', err);
+        listEl.innerHTML = `<div style="color:var(--c-error); text-align:center; padding:16px;">فشل تحميل خصومات المراقبين</div>`;
+    }
+}
+
 
 function setText(id, value) {
   const el = document.getElementById(id);

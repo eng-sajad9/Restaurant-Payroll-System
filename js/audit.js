@@ -28,22 +28,18 @@ async function loadAuditLogs() {
   if (pagin) pagin.style.display = 'none';
 
   try {
-    const snap = await db.collection('audit_logs')
-      .orderBy('timestamp', 'desc')
-      .limit(AUDIT_LIMIT)
-      .get();
-    _auditLogs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(AUDIT_LIMIT);
+      
+    if (error) throw error;
+    _auditLogs = data || [];
     renderAuditTable(_auditFilter);
   } catch (err) {
-    console.error('[audit] load error (index missing?):', err);
-    try {
-      const snap2 = await db.collection('audit_logs').limit(AUDIT_LIMIT).get();
-      _auditLogs = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
-      _auditLogs.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-      renderAuditTable(_auditFilter);
-    } catch (err2) {
-      showToast('فشل تحميل سجل التعديلات.', 'error');
-    }
+    console.error('[audit] load error:', err);
+    showToast('فشل تحميل سجل التعديلات.', 'error');
   }
 }
 
@@ -106,7 +102,7 @@ function renderAuditTable(filter) {
       actionHtml = `<span class="action-badge action-edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 00 2 2h14a2 2 0 00 2-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>تعديل</span>`;
     }
 
-    const ts = log.timestamp?.toDate?.();
+    const ts = log.created_at ? new Date(log.created_at) : null;
     const dateStr = ts ? ts.toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
     const timeStr = ts ? ts.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
 
@@ -151,7 +147,7 @@ function viewAuditDetail(id) {
   if (!log) return;
 
   const content = document.getElementById('audit-detail-content');
-  const ts = log.timestamp?.toDate?.();
+  const ts = log.created_at ? new Date(log.created_at) : null;
   const dateFull = ts ? ts.toLocaleString('ar-SA', { dateStyle: 'full', timeStyle: 'short' }) : '—';
 
   content.innerHTML = `
