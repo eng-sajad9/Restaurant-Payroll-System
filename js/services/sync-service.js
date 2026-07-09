@@ -172,6 +172,66 @@ async function syncEmployeesToCloud(deletedId = null) {
 // Expose globally so employees.js can call it without import
 window.syncEmployeesToCloud = syncEmployeesToCloud;
 
+/**
+ * Fetches all user accounts from local IndexedDB and upserts them into the
+ * Supabase `users` table so the online Supervisor app can authenticate them.
+ */
+async function syncUsersToCloud() {
+    if (!window.realSupabase) {
+        console.warn('[Reverse Sync] realSupabase not available — skipping user sync.');
+        return;
+    }
+
+    try {
+        // 1. Fetch all users from local IndexedDB
+        const { data: localUsers, error: fetchErr } = await window.supabase
+            .from('users')
+            .select('*');
+
+        if (fetchErr) throw fetchErr;
+
+        // 2. Format to matches DB shape
+        const payload = (localUsers || []).map(u => ({
+            id: String(u.id),
+            username: u.username,
+            password_hash: u.password_hash,
+            role: u.role,
+            can_view_analytics: u.can_view_analytics !== false,
+            can_delete: !!u.can_delete,
+            created_at: u.created_at || new Date().toISOString()
+        }));
+
+        // 3. Clear all old rows on Supabase to prevent stale/deleted accounts from lingering
+        const { error: clearErr } = await window.realSupabase
+            .from('users')
+            .delete()
+            .neq('id', '');
+
+        if (clearErr) {
+            console.warn('[Reverse Sync] Stale users cleanup warning:', clearErr.message);
+        }
+
+        // 4. Bulk insert the fresh list of users
+        if (payload.length > 0) {
+            const { error: insertErr } = await window.realSupabase
+                .from('users')
+                .insert(payload);
+
+            if (insertErr) throw insertErr;
+            console.log(`[Reverse Sync] 🔄 User sync complete. Uploaded ${payload.length} users to cloud.`);
+        } else {
+            console.log(`[Reverse Sync] 🔄 User sync complete. No users found locally.`);
+        }
+
+    } catch (err) {
+        console.warn('[Reverse Sync] User sync to cloud failed:', err.message);
+    }
+}
+
+// Expose globally so accounts.js can call it
+window.syncUsersToCloud = syncUsersToCloud;
+
+
 // ─── Polling Fallback Timer ──────────────────────────────────────────────────
 let syncPollInterval = null;
 
@@ -375,6 +435,9 @@ async function initializeCloudBridgeSync() {
         
         // 4. Run reverse sync to populate/update active_employees in Supabase
         await syncEmployeesToCloud();
+        
+        // 4.5. Run reverse sync for user accounts
+        await syncUsersToCloud();
         
         // 5. Start periodic polling fallback
         startSyncPolling();

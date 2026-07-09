@@ -245,6 +245,12 @@ async function saveAccount() {
             logAudit('إضافة', 'حساب', username, `الدور الأساسي: ${ROLE_LABELS[role] || role}`);
             showToast('تم إنشاء الحساب بنجاح.');
         }
+        
+        // Push user updates to cloud
+        if (window.syncUsersToCloud) {
+            await window.syncUsersToCloud();
+        }
+        
         closeAccModal();
         await loadAccounts();
     } catch (err) {
@@ -334,6 +340,11 @@ async function saveChangePwd() {
         const targetUname = isSelf ? current.username : (_accounts.find(a => a.id === _changePwdId)?.username || '');
         logAudit('تعديل', 'حساب', `تغيير كلمة مرور ${targetUname}`);
 
+        // Push password updates to cloud
+        if (window.syncUsersToCloud) {
+            await window.syncUsersToCloud();
+        }
+
         showToast('تم تغيير كلمة المرور بنجاح.');
         closeChangePwd();
     } catch (err) {
@@ -374,6 +385,11 @@ async function deleteAccount(id) {
         logAudit('حذف', 'حساب', acc?.username || id);
         showToast('تم حذف الحساب بنجاح.');
         await loadAccounts();
+        
+        // Push user deletions to cloud
+        if (window.syncUsersToCloud) {
+            await window.syncUsersToCloud();
+        }
     } catch (err) {
         showToast('فشل حذف الحساب.', 'error');
     }

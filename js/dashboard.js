@@ -27,6 +27,15 @@ async function loadDashboardStats(month) {
           const totalSal = salariesData.reduce((s, r) => s + (r.final_salary || 0), 0);
           setText('stat-salary', formatCurrency(totalSal));
           
+          // Calculate new metrics
+          const totalBonus = salariesData.reduce((s, r) => s + (r.bonus || 0), 0);
+          const totalDeduct = salariesData.reduce((s, r) => s + (r.deduction || 0), 0);
+          const totalOrders = salariesData.reduce((s, r) => s + (r.delivery_orders || 0), 0);
+          
+          setText('stat-bonuses', formatCurrency(totalBonus));
+          setText('stat-deductions-total', formatCurrency(totalDeduct));
+          setText('stat-orders', totalOrders.toLocaleString('en-US'));
+
           const labelEl = document.getElementById('dash-month-label');
           if (labelEl) labelEl.textContent = getMonthLabel(month);
 
