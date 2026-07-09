@@ -8,21 +8,42 @@ const SESSION_KEY = 'payroll_session';
 async function login(username, password) {
     try {
         const hash = await hashPassword(password.trim());
-        const { data: users, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('username', username.trim())
-            .limit(1);
+        let user = null;
+        let authSource = 'local';
 
-        if (error) throw error;
+        // 1. Try real Supabase first if online (crucial for supervisors and online sync)
+        if (window.realSupabase && navigator.onLine) {
+            try {
+                const { data: cloudUsers, error: cloudErr } = await window.realSupabase
+                    .from('users')
+                    .select('*')
+                    .eq('username', username.trim())
+                    .limit(1);
 
-        if (!users || users.length === 0) {
-            return { success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' };
+                if (!cloudErr && cloudUsers && cloudUsers.length > 0) {
+                    user = cloudUsers[0];
+                    authSource = 'cloud';
+                }
+            } catch (err) {
+                console.warn('[auth] Cloud authentication failed, falling back to local IndexedDB:', err);
+            }
         }
 
-        const user = users[0];
+        // 2. Local IndexedDB fallback
+        if (!user) {
+            const { data: users, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('username', username.trim())
+                .limit(1);
 
-        if (user.password_hash !== hash) {
+            if (error) throw error;
+            if (users && users.length > 0) {
+                user = users[0];
+            }
+        }
+
+        if (!user || user.password_hash !== hash) {
             return { success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' };
         }
 
@@ -32,6 +53,7 @@ async function login(username, password) {
             role: user.role,
             can_view_analytics: user.can_view_analytics !== false, // Default true
             can_delete: !!user.can_delete, // Default false
+            authSource: authSource,
             loginTime: Date.now()
         };
         sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
@@ -70,13 +92,11 @@ function hasRole(roles) {
     return !!user && roles.includes(user.role);
 }
 
-function isAdmin() { return hasRole(['admin']); }
-function canWrite() { return hasRole(['admin', 'manager']); }
-function isSupervisor() { return hasRole(['مراقب']); }
+// Global role checker functions
+window.isAdmin = function() { return hasRole(['admin']); };
+window.canWrite = function() { return hasRole(['admin', 'manager']); };
+window.isSupervisor = function() { return hasRole(['مراقب']); };
 
-/**
- * Check if current user can delete records
- */
 function canDelete() {
     const user = getCurrentUser();
     if (!user) return false;
@@ -85,9 +105,6 @@ function canDelete() {
     return false;
 }
 
-/**
- * Check if current user can view analytics
- */
 function canViewAnalytics() {
     const user = getCurrentUser();
     if (!user) return false;
@@ -110,7 +127,7 @@ function renderUserCard() {
     const user = getCurrentUser();
     if (!user) return;
 
-    const roleLabels = { admin: 'مدير النظام', manager: 'مشرف', viewer: 'مشاهد', 'مراقب': 'مراقب الحضور' };
+    const roleLabels = { admin: 'مدير النظام', manager: 'مشرف', viewer: 'مشاهد فقط', 'مراقب': 'مراقب الحضور' };
 
     const nameEl = document.getElementById('sidebar-username');
     const roleEl = document.getElementById('sidebar-role');
@@ -122,7 +139,6 @@ function renderUserCard() {
 
     // ── مراقب الحضور: واجهة مخصصة تماماً، يُخفى كل شيء آخر ──
     if (isSupervisor()) {
-        // Hide entire sidebar and main layout
         const sidebar = document.getElementById('sidebar');
         const mainArea = document.getElementById('main-area');
         const supSection = document.getElementById('supervisor-section');
@@ -131,7 +147,6 @@ function renderUserCard() {
         if (mainArea) mainArea.style.display = 'none';
         if (supSection) {
             supSection.style.display = 'flex';
-            // Update sup header user info
             const supUser = document.getElementById('sup-header-username');
             const supRole = document.getElementById('sup-header-role');
             if (supUser) supUser.textContent = user.username;
@@ -158,13 +173,14 @@ function renderUserCard() {
     if (!canWrite()) {
         document.querySelectorAll('[data-write-only]').forEach(el => el.style.display = 'none');
     } else {
-        // Show mobile nav if visible in CSS
         const mNav = document.querySelector('.mobile-nav');
         if (mNav) mNav.style.display = 'flex';
-
-        // Assuming loadDashboard and appSec are defined elsewhere or intended for another file
-        // if (appSec) appSec.style.display = 'block'; 
-        // loadDashboard(); 
         document.querySelectorAll('[data-write-only]').forEach(el => el.style.display = '');
     }
+
+    // ─── Start background Cloud Bridge sync immediately upon loading dashboard ───
+    if (typeof initializeCloudBridgeSync === 'function') {
+        initializeCloudBridgeSync();
+    }
 }
+

@@ -1,206 +1,361 @@
 /**
  * sync-service.js
- * Cloud Bridge synchronization pipeline for Restaurant Payroll system.
- * Syncs online pending deductions queue from Supabase into local IndexedDB.
+ * Cloud Bridge — bi-directional synchronisation pipeline.
+ *
+ * Responsibilities:
+ *  1. Pull pending_deductions from Supabase → save to local IndexedDB → notify manager UI instantly
+ *  2. Push active_employees from local IndexedDB → upsert to Supabase (Reverse Sync)
+ *  3. Manage the global sync-indicator widget
  */
 
-// Synchronization States
+// ─── Sync States ──────────────────────────────────────────────────────────────
 const SyncState = {
-    OFFLINE: 'Offline',
-    SYNCING: 'Syncing',
-    SYNCED: 'Synced/Idle',
-    ERROR: 'Error'
+    OFFLINE:  'Offline',
+    SYNCING:  'Syncing',
+    SYNCED:   'Synced/Idle',
+    ERROR:    'Error'
 };
 
 let currentSyncState = SyncState.SYNCED;
-let isSyncInProgress = false;
-let syncChannel = null;
+let isSyncInProgress  = false;
+let syncChannel       = null;   // Realtime channel for pending_deductions
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION A — Utilities
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Downloads image from a URL and converts it to a Base64 data-URI string.
- * @param {string} url - The public URL of the receipt image.
+ * @param {string} url
  * @returns {Promise<string|null>}
  */
 async function imageToBase64(url) {
     if (!url) return null;
     try {
         const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const blob = await response.blob();
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result);
-            reader.onerror = () => reject(new Error('FileReader failed to convert image blob.'));
+            reader.onerror  = () => reject(new Error('FileReader failed'));
             reader.readAsDataURL(blob);
         });
     } catch (error) {
         console.error('[Sync Engine] Image base64 conversion failed:', error);
-        throw error; // Rethrow to halt the pipeline to preserve integrity
+        throw error;
     }
 }
 
 /**
- * Extracts storage relative file path from public Supabase URL.
- * Example: https://xyz.supabase.co/storage/v1/object/public/deductions_images/emp-id/uuid.jpg
- * Returns: "emp-id/uuid.jpg"
+ * Extracts storage relative path from public Supabase bucket URL.
+ * e.g. "https://...supabase.co/storage/v1/object/public/deductions_images/emp/uuid.jpg"
+ *       → "emp/uuid.jpg"
  */
 function getStoragePathFromUrl(imageUrl) {
     const bucketToken = '/deductions_images/';
     const index = imageUrl.indexOf(bucketToken);
-    if (index === -1) {
-        return imageUrl.substring(imageUrl.lastIndexOf('/') + 1);
-    }
+    if (index === -1) return imageUrl.substring(imageUrl.lastIndexOf('/') + 1);
     return decodeURIComponent(imageUrl.substring(index + bucketToken.length));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION B — IndexedDB Extension
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Extension for DatabaseService.
- * Saves processed cloud deductions permanently in local IndexedDB.
+ * Saves a processed cloud deduction permanently in local Dexie IndexedDB
+ * and cascades the amount to the local salary record.
  */
 window.dbService.addDeductionToLocalDraft = async function (deduction) {
     const record = {
-        id: deduction.id || generateUUID(),
+        id:          deduction.id          || generateUUID(),
         employee_id: deduction.employee_id,
-        month: deduction.month || getCurrentMonth(),
-        amount: deduction.amount || 0,
-        note: deduction.reason || '',
-        image_data: deduction.image_data, 
-        added_by: deduction.supervisor_name || 'Supervisor (Cloud Bridge)', // Audit Trail mapping!
-        added_at: deduction.created_at || new Date().toISOString()
+        month:       deduction.month       || getCurrentMonth(),
+        amount:      deduction.amount      || 0,
+        note:        deduction.reason      || '',
+        image_data:  deduction.image_data,
+        added_by:    deduction.supervisor_name || 'Supervisor (Cloud Bridge)',
+        added_at:    deduction.created_at  || new Date().toISOString()
     };
 
-    // Store in local Dexie IndexedDB
     await this.insert('deduction_logs', record);
 
-    // Cascades the deduction amount into the local salaries table (if function exists)
     if (typeof syncDeductionToSalary === 'function') {
         try {
             await syncDeductionToSalary(
-                deduction.employee_id, 
-                record.month, 
-                record.note, 
-                record.added_by, 
+                deduction.employee_id,
+                record.month,
+                record.note,
+                record.added_by,
                 record.added_at
             );
         } catch (cascadeErr) {
-            console.warn('[Sync Engine] Local salary cascade update warning:', cascadeErr);
+            console.warn('[Sync Engine] Salary cascade warning:', cascadeErr);
         }
     }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION C — Reverse Sync: Push employees → Supabase
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Process a single deduction log queue entry.
- * Runs in a secure transaction flow.
+ * Fetches all active employees from local IndexedDB and upserts them into the
+ * Supabase `active_employees` table so the online Supervisor app can read them.
+ *
+ * Call this function from employees.js after:
+ *   • saveEmployee()    (add / update)
+ *   • deleteEmployee()  (delete — pass the deleted id to remove it)
+ *   • bulkDeleteEmployees()
+ *
+ * @param {string|null} deletedId - If provided, this employee id is also
+ *   deleted from the cloud table (used when an employee is removed locally).
+ */
+async function syncEmployeesToCloud(deletedId = null) {
+    if (!window.realSupabase) {
+        console.warn('[Reverse Sync] realSupabase not available — skipping employee sync.');
+        return;
+    }
+
+    try {
+        // 1. Fetch all employees from local IndexedDB
+        const { data: localEmps, error: fetchErr } = await window.supabase
+            .from('employees')
+            .select('*');
+
+        if (fetchErr) throw fetchErr;
+
+        // Local driver checker to avoid uploading drivers
+        const isEmpDriver = (role) => {
+            const r = (role || '').toLowerCase();
+            return r.includes('driver') || r.includes('delivery') ||
+                r.includes('سائق') || r.includes('توصيل') || r.includes('دليفري');
+        };
+
+        const employees = (localEmps || []).filter(e => !isEmpDriver(e.role));
+
+        // 2. Format to minimal { id, name, role } shape (Reverse Sync payload)
+        const payload = employees.map(e => ({ 
+            id: String(e.id), 
+            name: e.name,
+            role: e.role || '' // Essential for supervisor badge display
+        }));
+
+        // 3. Clear all old rows on Supabase to prevent stale/deleted employees from lingering
+        const { error: clearErr } = await window.realSupabase
+            .from('active_employees')
+            .delete()
+            .neq('id', ''); // Match all records
+
+        if (clearErr) {
+            console.warn('[Reverse Sync] Stale rows cleanup warning:', clearErr.message);
+        }
+
+        // 4. Bulk insert the fresh list of active employees
+        if (payload.length > 0) {
+            const { error: insertErr } = await window.realSupabase
+                .from('active_employees')
+                .insert(payload);
+
+            if (insertErr) throw insertErr;
+            console.log(`[Reverse Sync] 🔄 Sync complete. Uploaded ${payload.length} active employees to cloud.`);
+        } else {
+            console.log(`[Reverse Sync] 🔄 Sync complete. No active employees found locally.`);
+        }
+
+    } catch (err) {
+        console.warn('[Reverse Sync] Employee sync to cloud failed:', err.message);
+    }
+}
+
+// Expose globally so employees.js can call it without import
+window.syncEmployeesToCloud = syncEmployeesToCloud;
+
+// ─── Polling Fallback Timer ──────────────────────────────────────────────────
+let syncPollInterval = null;
+
+function startSyncPolling() {
+    if (syncPollInterval) clearInterval(syncPollInterval);
+    
+    // Poll every 10 seconds as a robust fallback for realtime subscription
+    syncPollInterval = setInterval(async () => {
+        if (!navigator.onLine || isSyncInProgress || !window.realSupabase) return;
+        
+        const currentUser = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+        if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'manager')) return;
+
+        try {
+            const { data, error } = await window.realSupabase
+                .from('pending_deductions')
+                .select('*')
+                .order('created_at', { ascending: true });
+
+            if (!error && data && data.length > 0) {
+                console.log(`[Sync Poller] 🔍 Found ${data.length} pending deductions on cloud queue.`);
+                isSyncInProgress = true;
+                updateSyncIndicator(SyncState.SYNCING);
+                
+                for (const row of data) {
+                    await processIncomingDeduction(row);
+                }
+                
+                updateSyncIndicator(SyncState.SYNCED);
+                isSyncInProgress = false;
+            }
+        } catch (pollErr) {
+            console.warn('[Sync Poller] Periodic check warning:', pollErr);
+            isSyncInProgress = false;
+        }
+    }, 10000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION D — Forward Sync: Pull deductions from Supabase → IndexedDB
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fires all necessary UI refresh calls after a deduction is processed.
+ * This is the key function that makes the manager app update in real-time
+ * without requiring a page refresh.
+ */
+async function _refreshManagerUI(employeeName) {
+    // 1. Invalidate any in-memory caches
+    if (window.appCache && typeof window.appCache.invalidate === 'function') {
+        window.appCache.invalidate('deduction_logs');
+        window.appCache.invalidate('salaries');
+    }
+    if (typeof invalidateCache === 'function') {
+        invalidateCache('deduction_logs');
+        invalidateCache('salaries');
+    }
+
+    // 2. Re-render the salary table if that page is currently active
+    const salPage = document.getElementById('page-salaries');
+    if (salPage && salPage.classList.contains('active')) {
+        if (typeof loadSalaries === 'function') {
+            try { await loadSalaries(typeof _salMonth !== 'undefined' ? _salMonth : getCurrentMonth()); }
+            catch (e) { console.warn('[Sync UI] loadSalaries failed:', e); }
+        }
+    }
+
+    // 3. Refresh dashboard if active
+    const dashPage = document.getElementById('page-dashboard');
+    if (dashPage && dashPage.classList.contains('active')) {
+        if (typeof initDashboard === 'function') {
+            try { await initDashboard(); }
+            catch (e) { console.warn('[Sync UI] initDashboard failed:', e); }
+        }
+    }
+
+    // 4. Show a premium toast notification to the manager
+    if (typeof showToast === 'function') {
+        showToast(`🔔 خصم جديد وصل من المراقب للموظف: ${employeeName}`, 'success');
+    }
+
+    // 5. Play a subtle notification sound (if browser supports it)
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.connect(gain);
+        gain.connect(ctx.destination);
+        oscillator.frequency.value = 880;
+        oscillator.type = 'sine';
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.4);
+    } catch (_) { /* Audio not critical */ }
+}
+
+/**
+ * Process a single incoming deduction from the Supabase queue.
  */
 async function processIncomingDeduction(row) {
     if (currentSyncState === SyncState.OFFLINE) return;
 
     try {
         let base64Image = null;
-
-        // 1. Fetch image and convert to Base64
         if (row.image_url) {
             base64Image = await imageToBase64(row.image_url);
         }
 
-        // 2. Lookup employee name locally (for premium personalized toasts)
+        // Lookup employee name for notification
         let employeeName = `رقم ${row.employee_id}`;
         try {
-            const localEmps = await window.dbService.select('employees', {
-                filters: [{ type: 'eq', field: 'id', value: row.employee_id }]
-            });
-            if (localEmps && localEmps.length > 0) {
-                employeeName = localEmps[0].name;
-            }
-        } catch (dbErr) {
-            console.warn('[Sync Engine] Failed local employee lookup:', dbErr);
-        }
+            const { data: localEmps } = await window.supabase
+                .from('employees')
+                .select('*')
+                .eq('id', row.employee_id)
+                .limit(1);
+            if (localEmps && localEmps.length > 0) employeeName = localEmps[0].name;
+        } catch (_) {}
 
-        // 3. Save deduction permanently in local IndexedDB
-        const localDeduction = {
-            id: row.id,
-            employee_id: row.employee_id,
-            amount: row.amount,
-            reason: row.reason,
-            image_data: base64Image,
-            created_at: row.created_at,
-            supervisor_name: row.supervisor_name // Passed to local IndexedDB coordinator
-        };
-        await window.dbService.addDeductionToLocalDraft(localDeduction);
+        // Save to local IndexedDB (also cascades to salary)
+        await window.dbService.addDeductionToLocalDraft({
+            id:              row.id,
+            employee_id:     row.employee_id,
+            amount:          row.amount,
+            reason:          row.reason,
+            image_data:      base64Image,
+            created_at:      row.created_at,
+            supervisor_name: row.supervisor_name
+        });
 
-        // 4. Delete file from storage bucket
+        // Delete receipt image from storage
         if (row.image_url) {
             const storagePath = getStoragePathFromUrl(row.image_url);
-            const { error: deleteImgError } = await window.realSupabase.storage
+            const { error: imgDelErr } = await window.realSupabase.storage
                 .from('deductions_images')
                 .remove([storagePath]);
-            if (deleteImgError) {
-                console.warn('[Sync Engine] Storage cleanup failed:', deleteImgError.message);
-            }
+            if (imgDelErr) console.warn('[Sync Engine] Storage cleanup warning:', imgDelErr.message);
         }
 
-        // 5. Delete deduction row from pending queue
-        const { error: deleteRowError } = await window.realSupabase
+        // Delete queue row
+        const { error: rowDelErr } = await window.realSupabase
             .from('pending_deductions')
             .delete()
             .eq('id', row.id);
 
-        if (deleteRowError) {
-            throw new Error(`Failed to remove queue item: ${deleteRowError.message}`);
-        }
+        if (rowDelErr) throw new Error(`Queue cleanup failed: ${rowDelErr.message}`);
 
-        // 6. Trigger non-blocking toast notification
-        if (typeof showToast === 'function') {
-            showToast(`تم استلام خصم جديد للموظف: ${employeeName}`, 'success');
-        }
-
-        // Invalidate cache so manager page shows updated deductions
-        if (window.appCache && typeof window.appCache.invalidate === 'function') {
-            window.appCache.invalidate('deduction_logs');
-            window.appCache.invalidate('salaries');
-        }
-        
-        // Refresh local dashboard if currently on it
-        if (typeof initDashboard === 'function' && document.getElementById('page-dashboard')?.classList.contains('active')) {
-            initDashboard();
-        }
+        // ✅ Refresh manager UI immediately (real-time feel)
+        await _refreshManagerUI(employeeName);
 
         return true;
     } catch (error) {
-        console.error('[Sync Engine] Processing transaction halted:', error);
+        console.error('[Sync Engine] Processing halted:', error);
         updateSyncIndicator(SyncState.ERROR);
-        throw error; // Halts sequential loop to prevent data deletion without saving
+        throw error;
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION E — Main Sync Entry Points
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Runs bulk sync process to pull existing backlog.
+ * Runs the initial backlog pull and sets up the Realtime subscription.
  */
 async function initializeCloudBridgeSync() {
     if (isSyncInProgress) return;
-    
-    if (!navigator.onLine) {
-        updateSyncIndicator(SyncState.OFFLINE);
-        return;
-    }
-
+    if (!navigator.onLine) { updateSyncIndicator(SyncState.OFFLINE); return; }
     if (!window.realSupabase) {
-        console.warn('[Sync Engine] Real Supabase client is not loaded. Sync disabled.');
+        console.warn('[Sync Engine] realSupabase not ready — sync disabled.');
         updateSyncIndicator(SyncState.OFFLINE);
         return;
     }
 
-    // Only run sync pulls for authorized manager or admin users
+    // Only run for admin / manager roles
     const currentUser = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
-    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'manager')) {
-        return;
-    }
+    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'manager')) return;
 
     isSyncInProgress = true;
     updateSyncIndicator(SyncState.SYNCING);
 
     try {
-        // 1. Fetch pending rows (backlog)
+        // Pull existing backlog
         const { data, error } = await window.realSupabase
             .from('pending_deductions')
             .select('*')
@@ -208,9 +363,8 @@ async function initializeCloudBridgeSync() {
 
         if (error) throw error;
 
-        // 2. Sequentially process rows
         if (data && data.length > 0) {
-            console.log(`[Sync Engine] Processing ${data.length} queued records.`);
+            console.log(`[Sync Engine] Processing ${data.length} backlog records.`);
             for (const row of data) {
                 await processIncomingDeduction(row);
             }
@@ -218,6 +372,12 @@ async function initializeCloudBridgeSync() {
 
         // 3. Subscribe to real-time additions
         subscribeToRealtimeDeductions();
+        
+        // 4. Run reverse sync to populate/update active_employees in Supabase
+        await syncEmployeesToCloud();
+        
+        // 5. Start periodic polling fallback
+        startSyncPolling();
         
         updateSyncIndicator(SyncState.SYNCED);
     } catch (err) {
@@ -229,82 +389,79 @@ async function initializeCloudBridgeSync() {
 }
 
 /**
- * Establishes realtime subscription to Postgres table inserts.
+ * Establishes Postgres Realtime subscription for instant deduction delivery.
  */
 function subscribeToRealtimeDeductions() {
-    if (syncChannel) return; // Channel already active
+    if (syncChannel) return; // Already subscribed
 
-    syncChannel = window.realSupabase.channel('cloud-bridge-channel')
+    syncChannel = window.realSupabase
+        .channel('cloud-bridge-deductions')
         .on(
             'postgres_changes',
             { event: 'INSERT', schema: 'public', table: 'pending_deductions' },
             async (payload) => {
-                console.log('[Realtime Event] New deduction received:', payload.new);
+                console.log('[Realtime] 📥 New deduction arrived:', payload.new);
+                updateSyncIndicator(SyncState.SYNCING);
                 try {
                     await processIncomingDeduction(payload.new);
                     updateSyncIndicator(SyncState.SYNCED);
                 } catch (err) {
-                    console.error('[Realtime Event] Processing failed:', err);
+                    console.error('[Realtime] Processing failed:', err);
                     updateSyncIndicator(SyncState.ERROR);
                 }
             }
         )
-        .subscribe();
+        .subscribe((status) => {
+            console.log('[Realtime] Channel status:', status);
+        });
 }
 
-/**
- * Updates the Global Sync Indicator visually.
- * @param {string} state - The SyncState value.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION F — Sync Indicator Widget
+// ─────────────────────────────────────────────────────────────────────────────
+
 function updateSyncIndicator(state) {
     currentSyncState = state;
     const container = document.getElementById('sync-indicator');
     if (!container) return;
 
-    // Reset current classes while retaining container class
     container.className = 'sync-indicator-container';
-    
-    const textEl = container.querySelector('.sync-text');
+    const textEl  = container.querySelector('.sync-text');
     const spinner = container.querySelector('.sync-spinner');
 
     switch (state) {
         case SyncState.OFFLINE:
             container.classList.add('state-offline');
-            if (textEl) textEl.textContent = 'أوفلاين (غير متصل)';
+            if (textEl)  textEl.textContent  = 'أوفلاين (غير متصل)';
             if (spinner) spinner.style.display = 'none';
             break;
-            
         case SyncState.SYNCING:
             container.classList.add('state-syncing');
-            if (textEl) textEl.textContent = 'جاري المزامنة...';
+            if (textEl)  textEl.textContent  = 'جاري المزامنة...';
             if (spinner) spinner.style.display = 'inline-block';
             break;
-            
         case SyncState.SYNCED:
             container.classList.add('state-synced');
-            if (textEl) textEl.textContent = 'متصل (جاهز)';
+            if (textEl)  textEl.textContent  = 'متصل (جاهز)';
             if (spinner) spinner.style.display = 'none';
             break;
-            
         case SyncState.ERROR:
             container.classList.add('state-error');
-            if (textEl) textEl.textContent = 'خطأ في المزامنة';
+            if (textEl)  textEl.textContent  = 'خطأ في المزامنة';
             if (spinner) spinner.style.display = 'none';
             break;
     }
 }
 
-// Watch network status to trigger sync or update indicator
-window.addEventListener('online', () => {
-    initializeCloudBridgeSync();
-});
-window.addEventListener('offline', () => {
-    updateSyncIndicator(SyncState.OFFLINE);
-});
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION G — Event Listeners & Bootstrap
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Trigger sync after login/session is verified
+window.addEventListener('online',  () => initializeCloudBridgeSync());
+window.addEventListener('offline', () => updateSyncIndicator(SyncState.OFFLINE));
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Small delay to ensure all modules are fully loaded
+    // Small delay to ensure all modules (auth, db-service) are fully loaded
     setTimeout(() => {
         const user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
         if (user && (user.role === 'admin' || user.role === 'manager')) {

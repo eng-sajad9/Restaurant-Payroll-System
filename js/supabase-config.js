@@ -1,29 +1,43 @@
 /**
  * supabase-config.js
  * Supabase configuration fallback layer mapping to Local IndexedDB service.
+ *
+ * ⚠️  CRITICAL LOADING ORDER:
+ *  The Supabase CDN script sets  window.supabase = { createClient, ... }
+ *  We MUST capture that reference BEFORE we overwrite window.supabase
+ *  with the offline mock adapter. Without this the realSupabase client
+ *  is never created and ALL cloud features break silently.
  */
 
-// Initialize the mock Supabase client adapter from db-service
+// ─── Step 1: Save real SDK reference BEFORE mock overwrites it ────────────────
+const _SupabaseSDK = (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function')
+    ? supabase
+    : null;
+
+// ─── Step 2: Bind offline-first mock adapter to window.supabase ───────────────
 window.supabase = window.mockSupabase;
 
-const db = {
-    // Mock db object shim
-};
+const db = { /* Mock db shim */ };
 
-// ─── Real Supabase Client Configuration (Cloud Bridge Engine) ────────────────
-// These credentials are used in the background to sync with the online DB.
-// Update these placeholders with your actual Supabase URL and public anon key.
-window.SUPABASE_URL = window.SUPABASE_URL || 'https://your-project.supabase.co';
-window.SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+// ─── Step 3: Initialise real cloud client using the saved SDK ref ─────────────
+window.SUPABASE_URL      = 'https://qimrmwwksfrwfdcuhiiq.supabase.co';
+window.SUPABASE_ANON_KEY = 'sb_publishable_Dzjsbg7dUWBZ21k-uNwJNg_S9C1k_Lf';
 
-// Instantiate the real Supabase client if the official SDK is loaded
-if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
+if (_SupabaseSDK) {
     try {
-        window.realSupabase = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
-        console.log('[Supabase Config] Real Supabase client successfully initialized.');
+        window.realSupabase = _SupabaseSDK.createClient(
+            window.SUPABASE_URL,
+            window.SUPABASE_ANON_KEY,
+            {
+                realtime: { params: { eventsPerSecond: 10 } }
+            }
+        );
+        console.log('[Supabase Config] ✅ realSupabase client initialised successfully.');
     } catch (err) {
-        console.warn('[Supabase Config] Failed to initialize real Supabase client:', err);
+        console.error('[Supabase Config] ❌ Failed to create realSupabase client:', err);
+        window.realSupabase = null;
     }
 } else {
-    console.warn('[Supabase Config] Supabase library is not loaded. Realtime sync will be disabled.');
+    console.warn('[Supabase Config] ⚠️  Supabase SDK not found — cloud bridge disabled.');
+    window.realSupabase = null;
 }

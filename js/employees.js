@@ -254,6 +254,10 @@ async function bulkDeleteEmployees() {
         _selectedEmpIds.clear();
         invalidateCache('employees');
         onSelectionChange();
+        // ── Reverse Sync: remove deleted employees from Supabase ──
+        if (typeof syncEmployeesToCloud === 'function') {
+            for (const deletedId of idsToDelete) syncEmployeesToCloud(deletedId);
+        }
     } catch (err) {
         console.error('[employees] bulk delete error:', err);
         showToast('حدث خطأ أثناء الحذف الجماعي.', 'error');
@@ -376,6 +380,8 @@ async function saveEmployee() {
         }
         invalidateCache('employees');
         closeEmpModal();
+        // ── Reverse Sync: push updated employee list to Supabase for Supervisor app ──
+        if (typeof syncEmployeesToCloud === 'function') syncEmployeesToCloud();
     } catch (err) {
         console.error('[employees] save error:', err);
         showToast('فشل في بدء عملية الحفظ.', 'error');
@@ -399,6 +405,8 @@ async function deleteEmployee(id) {
         logAudit('حذف', 'موظف', emp?.name || id, `الدور: ${emp?.role || '—'}`);
         invalidateCache('employees');
         showToast('تم حذف الموظف بنجاح.');
+        // ── Reverse Sync: remove deleted employee from Supabase active_employees ──
+        if (typeof syncEmployeesToCloud === 'function') syncEmployeesToCloud(id);
     } catch (err) {
         console.error('[employees] delete error:', err);
         showToast('فشل حذف الموظف.', 'error');

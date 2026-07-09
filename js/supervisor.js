@@ -6,8 +6,9 @@
 let _supEmps = [];
 let _supEditEmpId = null;
 let _supImageBase64 = null;
-let _supImageFile = null; // Stores raw File object for Supabase Storage uploads
+let _supImageFile = null;
 let _supCurrentMonth = getCurrentMonth();
+let _supEmpChannel = null; // Realtime channel for active_employees updates
 
 async function initSupervisor() {
     const monthSel = document.getElementById('sup-month-sel');
@@ -18,20 +19,78 @@ async function initSupervisor() {
     await loadSupervisorEmployees();
 }
 
+/**
+ * Loads employees for the Supervisor app.
+ *
+ * Strategy:
+ *  1. If online (window.realSupabase available) → fetch from Supabase
+ *     `active_employees` table (populated by the Manager app via Reverse Sync).
+ *  2. If offline → fall back to local mock adapter.
+ *
+ * Also subscribes to Realtime so the dropdown updates automatically
+ * when the manager adds or removes an employee.
+ */
 async function loadSupervisorEmployees() {
     const grid = document.getElementById('sup-emp-grid');
     if (!grid) return;
-    grid.innerHTML = '<div class="sup-loading"><span class="spinner"></span> جاري التحميل...</div>';
+    grid.innerHTML = '<div class="sup-loading"><span class="spinner"></span> جاري تحميل الموظفين...</div>';
+
     try {
-        const { data, error } = await supabase.from('employees').select('*').order('name', { ascending: true });
-        if (error) throw error;
-        _supEmps = (data || []).filter(e => !isDriver(e.role));
+        let employees = [];
+
+        if (window.realSupabase) {
+            // ── Online path: fetch from Supabase active_employees (Reverse Sync table) ──
+            const { data, error } = await window.realSupabase
+                .from('active_employees')
+                .select('*')
+                .order('name', { ascending: true });
+
+            if (error) throw error;
+            employees = data || [];
+
+            // Subscribe to Realtime so dropdown auto-refreshes when manager changes employees
+            _subscribeToActiveEmployeesChanges();
+
+        } else {
+            // ── Offline fallback: read from local mock IndexedDB ──
+            const { data, error } = await supabase
+                .from('employees')
+                .select('*')
+                .order('name', { ascending: true });
+
+            if (error) throw error;
+            employees = (data || []).filter(e => !isDriver(e.role));
+        }
+
+        _supEmps = employees;
         populateSupRoleFilter();
         renderSupervisorEmployees(_supEmps);
+
     } catch (err) {
-        console.error('[supervisor] load error:', err);
-        grid.innerHTML = '<div class="sup-error">فشل تحميل الموظفين</div>';
+        console.error('[supervisor] loadSupervisorEmployees error:', err);
+        grid.innerHTML = '<div class="sup-error">فشل تحميل الموظفين. تأكد من اتصال الإنترنت.</div>';
     }
+}
+
+/**
+ * Subscribes to Supabase Realtime on `active_employees` table.
+ * When the manager app adds/removes/edits an employee, this fires
+ * and the supervisor's grid refreshes automatically.
+ */
+function _subscribeToActiveEmployeesChanges() {
+    if (_supEmpChannel || !window.realSupabase) return;
+
+    _supEmpChannel = window.realSupabase
+        .channel('supervisor-active-employees')
+        .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'active_employees' },
+            async () => {
+                console.log('[Supervisor Realtime] 🔄 active_employees changed — refreshing grid…');
+                await loadSupervisorEmployees();
+            }
+        )
+        .subscribe();
 }
 
 function populateSupRoleFilter() {

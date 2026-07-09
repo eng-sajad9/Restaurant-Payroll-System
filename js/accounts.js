@@ -183,12 +183,26 @@ async function saveAccount() {
                 saveBtn.disabled = false;
                 return;
             }
-            const { error } = await supabase.from('users').update({
+
+            const updateData = {
                 username,
                 role,
                 ...perms
-            }).eq('id', _editAccId);
+            };
+
+            // Local write
+            const { error } = await supabase.from('users').update(updateData).eq('id', _editAccId);
             if (error) throw error;
+
+            // Cloud write
+            if (window.realSupabase) {
+                try {
+                    await window.realSupabase.from('users').update(updateData).eq('id', _editAccId);
+                } catch (cloudErr) {
+                    console.warn('[Accounts Sync] Cloud user update failed:', cloudErr);
+                }
+            }
+
             logAudit('تعديل', 'حساب', username, `تعديل الدور إلى: ${ROLE_LABELS[role] || role}`);
             showToast('تم تحديث الحساب بنجاح.');
         } else {
@@ -200,19 +214,34 @@ async function saveAccount() {
             if (password !== confirm) { showToast('كلمتا المرور غير متطابقتين.', 'error'); saveBtn.disabled = false; return; }
             if (password.length < 6) { showToast('كلمة المرور يجب أن تكون 6 أحرف على الأقل.', 'error'); saveBtn.disabled = false; return; }
 
-            // Check username uniqueness
+            // Check username uniqueness (local)
             const { data: dup, error: dupErr } = await supabase.from('users').select('id').eq('username', username).limit(1);
             if (dupErr) throw dupErr;
             if (dup && dup.length > 0) { showToast('اسم المستخدم مستخدم مسبقاً.', 'warning'); saveBtn.disabled = false; return; }
 
             const password_hash = await hashPassword(password);
-            const { error } = await supabase.from('users').insert([{
+            const newUserRecord = {
+                id: generateUUID(),
                 username,
                 password_hash,
                 role,
-                ...perms
-            }]);
+                ...perms,
+                created_at: new Date().toISOString()
+            };
+
+            // Local write
+            const { error } = await supabase.from('users').insert([newUserRecord]);
             if (error) throw error;
+
+            // Cloud write
+            if (window.realSupabase) {
+                try {
+                    await window.realSupabase.from('users').insert([newUserRecord]);
+                } catch (cloudErr) {
+                    console.warn('[Accounts Sync] Cloud user creation failed:', cloudErr);
+                }
+            }
+
             logAudit('إضافة', 'حساب', username, `الدور الأساسي: ${ROLE_LABELS[role] || role}`);
             showToast('تم إنشاء الحساب بنجاح.');
         }
@@ -288,8 +317,19 @@ async function saveChangePwd() {
         }
 
         const newHash = await hashPassword(newPwd.trim());
+
+        // Local password update
         const { error } = await supabase.from('users').update({ password_hash: newHash }).eq('id', _changePwdId);
         if (error) throw error;
+
+        // Cloud password update
+        if (window.realSupabase) {
+            try {
+                await window.realSupabase.from('users').update({ password_hash: newHash }).eq('id', _changePwdId);
+            } catch (cloudErr) {
+                console.warn('[Accounts Sync] Cloud password update failed:', cloudErr);
+            }
+        }
 
         const targetUname = isSelf ? current.username : (_accounts.find(a => a.id === _changePwdId)?.username || '');
         logAudit('تعديل', 'حساب', `تغيير كلمة مرور ${targetUname}`);
@@ -318,8 +358,19 @@ async function deleteAccount(id) {
     if (!ok) return;
 
     try {
+        // Local delete
         const { error } = await supabase.from('users').delete().eq('id', id);
         if (error) throw error;
+
+        // Cloud delete
+        if (window.realSupabase) {
+            try {
+                await window.realSupabase.from('users').delete().eq('id', id);
+            } catch (cloudErr) {
+                console.warn('[Accounts Sync] Cloud user deletion failed:', cloudErr);
+            }
+        }
+
         logAudit('حذف', 'حساب', acc?.username || id);
         showToast('تم حذف الحساب بنجاح.');
         await loadAccounts();
