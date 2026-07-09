@@ -16,24 +16,23 @@ async function initSupervisor() {
         monthSel.innerHTML = buildMonthOptions(_supCurrentMonth);
         monthSel.onchange = () => { _supCurrentMonth = monthSel.value; };
     }
-    await loadSupervisorEmployees();
+    await loadSupervisorEmployees(true);
+    startSupervisorPolling(); // Start robust polling fallback for network disconnects
 }
 
 /**
  * Loads employees for the Supervisor app.
  *
- * Strategy:
- *  1. If online (window.realSupabase available) → fetch from Supabase
- *     `active_employees` table (populated by the Manager app via Reverse Sync).
- *  2. If offline → fall back to local mock adapter.
- *
- * Also subscribes to Realtime so the dropdown updates automatically
- * when the manager adds or removes an employee.
+ * @param {boolean} showSpinner - If true, displays loading indicator. 
+ *                                Set to false for silent background updates.
  */
-async function loadSupervisorEmployees() {
+async function loadSupervisorEmployees(showSpinner = true) {
     const grid = document.getElementById('sup-emp-grid');
     if (!grid) return;
-    grid.innerHTML = '<div class="sup-loading"><span class="spinner"></span> جاري تحميل الموظفين...</div>';
+    
+    if (showSpinner) {
+        grid.innerHTML = '<div class="sup-loading"><span class="spinner"></span> جاري تحميل الموظفين...</div>';
+    }
 
     try {
         let employees = [];
@@ -68,14 +67,16 @@ async function loadSupervisorEmployees() {
 
     } catch (err) {
         console.error('[supervisor] loadSupervisorEmployees error:', err);
-        grid.innerHTML = '<div class="sup-error">فشل تحميل الموظفين. تأكد من اتصال الإنترنت.</div>';
+        if (showSpinner) {
+            grid.innerHTML = '<div class="sup-error">فشل تحميل الموظفين. تأكد من اتصال الإنترنت.</div>';
+        }
     }
 }
 
 /**
  * Subscribes to Supabase Realtime on `active_employees` table.
  * When the manager app adds/removes/edits an employee, this fires
- * and the supervisor's grid refreshes automatically.
+ * and the supervisor's grid refreshes automatically in the background.
  */
 function _subscribeToActiveEmployeesChanges() {
     if (_supEmpChannel || !window.realSupabase) return;
@@ -87,11 +88,26 @@ function _subscribeToActiveEmployeesChanges() {
             { event: '*', schema: 'public', table: 'active_employees' },
             async () => {
                 console.log('[Supervisor Realtime] 🔄 active_employees changed — refreshing grid…');
-                await loadSupervisorEmployees();
+                await loadSupervisorEmployees(false); // Background update without flashing spinner!
             }
         )
         .subscribe();
 }
+
+// ─── Supervisor Polling Fallback ─────────────────────────────────────────────
+let supervisorPollInterval = null;
+
+function startSupervisorPolling() {
+    if (supervisorPollInterval) clearInterval(supervisorPollInterval);
+    
+    // Poll every 30 seconds for background sync fallback
+    supervisorPollInterval = setInterval(async () => {
+        if (navigator.onLine && window.realSupabase) {
+            await loadSupervisorEmployees(false); // Silent background refresh
+        }
+    }, 30000);
+}
+
 
 function populateSupRoleFilter() {
     const filter = document.getElementById('sup-role-filter');
